@@ -1,0 +1,58 @@
+name: Деплой на GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Позволяет запустить вручную из вкладки Actions, не делая пустой коммит.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Одновременно катится только один деплой. Незапущенные из очереди
+# отбрасываются: последний пуш всё равно перекрывает предыдущий.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Сборка
+    runs-on: ubuntu-latest
+    steps:
+      # Ядро — подмодулем в src/shared (Р-03): без этой строки сборка
+      # останется без ядра и упадёт непонятной ошибкой.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # ci, а не install: ставит ровно то, что в package-lock.json.
+      - run: npm ci
+
+      - run: npm run test
+
+      - run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Публикация
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Требует Settings → Pages → Source = GitHub Actions.
+      # Иначе шаг падает с «Not Found».
+      - id: deployment
+        uses: actions/deploy-pages@v4

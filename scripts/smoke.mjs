@@ -1,0 +1,380 @@
+/**
+ * Прогон собранного приложения в настоящем браузере — обвязка.
+ *
+ * Отвечает на один вопрос: открывается ли приложение и не падает ли оно
+ * на обычном пути. Не проверяет вёрстку и не заменяет тесты расчёта.
+ *
+ * Без Playwright: уже установленный браузер на Chromium и протокол отладки
+ * поверх WebSocket, встроенного в Node 22+. Ни одной зависимости, кроме Vite
+ * самого проекта.
+ *
+ * Данные не трогает: браузер запускается с пустым временным профилем.
+ *
+ * Запуск: `npm run smoke`. Собирает сам, поэтому проверяет ровно тот код,
+ * который лежит в `src/` сейчас. Падает с кодом 1, если браузер сообщил
+ * об ошибке или проверка не сошлась.
+ *
+ * Сценарий пишется в функции `scenario` ниже.
+ */
+
+import { spawn } from 'node:child_process'
+import { build, preview } from 'vite'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+/** Адрес собранного приложения. Заполняется, когда поднимется сервер. */
+let APP = ''
+
+/** Свой порт отладки, чтобы не столкнуться с открытым браузером. */
+const DEBUG_PORT = 9333
+
+/** Где искать браузер. Годится любой на Chromium. Свой путь — CHROME_PATH. */
+const BROWSERS = [
+  process.env.CHROME_PATH,
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium',
+]
+
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
+
+// ─── Запуск ────────────────────────────────────────────────────────────────
+
+function findBrowser() {
+  const found = BROWSERS.find((path) => path && existsSync(path))
+  if (!found) throw new Error('Браузер на Chromium не найден. Укажите путь в переменной CHROME_PATH.')
+  return found
+}
+
+/**
+ * Собирает и поднимает просмотр через API Vite, а не `npm run preview`:
+ * на Windows Node не запускает `.cmd` без оболочки. Адрес — у самого
+ * сервера, вместе с `base` из vite.config.ts.
+ *
+ * Собираем сами, а не полагаемся на dist от прошлого раза: прогон, который
+ * молча проверяет вчерашнюю сборку, показывает зелёное на сломанном коде.
+ */
+async function startServer() {
+  await build({ root: ROOT, logLevel: 'warn' })
+  const server = await preview({ root: ROOT })
+  const url = server.resolvedUrls?.local?.[0]
+  if (!url) {
+    await server.close()
+    throw new Error('Сервер просмотра не назвал адрес')
+  }
+  APP = url
+  return server
+}
+
+/** Адрес вкладки в протоколе отладки. */
+async function pageSocket() {
+  for (let i = 0; i < 40; i++) {
+    try {
+      const tabs = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`).then((r) => r.json())
+      const page = tabs.find((tab) => tab.type === 'page')
+      if (page) return page.webSocketDebuggerUrl
+    } catch {
+      // Браузер ещё не открыл порт.
+    }
+    await sleep(250)
+  }
+  throw new Error('Браузер не отдал порт отладки')
+}
+
+// ─── Разговор с браузером ──────────────────────────────────────────────────
+
+/** Ошибки, о которых сообщил сам браузер. Любая валит прогон. */
+const problems = []
+
+/** Проверки сценария. */
+const checks = []
+
+function check(what, passed, seen = '') {
+  checks.push({ what, passed, seen })
+}
+
+let socket
+let seq = 0
+const waiting = new Map()
+
+function connect(url) {
+  socket = new WebSocket(url)
+
+  socket.onmessage = (event) => {
+    const message = JSON.parse(event.data)
+
+    if (message.id !== undefined) {
+      waiting.get(message.id)?.(message)
+      waiting.delete(message.id)
+      return
+    }
+
+    if (message.method === 'Runtime.exceptionThrown') {
+      const details = message.params.exceptionDetails
+      problems.push(details.exception?.description ?? details.text)
+    }
+
+    if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
+      problems.push(message.params.args.map((arg) => arg.value ?? arg.description).join(' '))
+    }
+  }
+
+  return new Promise((done, fail) => {
+    socket.onopen = done
+    socket.onerror = fail
+  })
+}
+
+/** Команда протокола. Ответ с ошибкой приходит без `result` — вернётся undefined. */
+function send(method, params = {}) {
+  const id = ++seq
+  return new Promise((done) => {
+    waiting.set(id, (message) => done(message.result))
+    socket.send(JSON.stringify({ id, method, params }))
+  })
+}
+
+/**
+ * Выполняет выражение на странице. Исключение здесь — тоже ошибка прогона:
+ * не нашлась кнопка — значит экран не тот, каким его считали.
+ */
+async function run(expression) {
+  const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+  if (!result) {
+    problems.push(`протокол не ответил на выражение: ${expression.slice(0, 60)}`)
+    return null
+  }
+  if (result.exceptionDetails) {
+    problems.push(result.exceptionDetails.exception?.description ?? 'ошибка в сценарии')
+    return null
+  }
+  return result.result.value
+}
+
+/**
+ * Помощники внутри каждого шага.
+ *
+ * `set` пишет в поле как человек: React слушает не присваивание `value`,
+ * а событие с нативного сеттера. `blur` — через focusout: обычный blur
+ * не всплывает, и onBlur его не увидит.
+ *
+ * Кончаются точкой с запятой: шаг, начатый с `[` или `(`, иначе склеился бы
+ * с последней строкой в одно выражение.
+ */
+const HELPERS = `
+  const set = (el, value) => {
+    const setter = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value').set;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const blur = (el) => {
+    el.blur();
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  };
+  const byText = (tag, label) =>
+    [...document.querySelectorAll(tag)].find((el) => el.textContent.trim() === label);
+  const startsWith = (tag, prefix) =>
+    [...document.querySelectorAll(tag)].find((el) => el.textContent.trim().startsWith(prefix));
+`
+
+/** Шаг сценария: тело выполняется на странице с помощниками выше. */
+const act = (body) => run(`(() => {${HELPERS}\n${body}\n})()`)
+
+/** Текст всего экрана. По нему и делаются проверки. Корень — поправить под проект. */
+const screen = () => run('document.querySelector("#root")?.innerText ?? ""')
+
+/**
+ * Есть ли на экране такой текст — без учёта регистра и неразрывных пробелов.
+ * `innerText` отдаёт `text-transform`: заголовки капителью приходят прописными,
+ * и проверка «этого больше нет» иначе проходит ложно.
+ */
+function has(text, needle) {
+  const flat = (value) => value.replace(/\u00A0/g, ' ').toLowerCase()
+  return flat(text).includes(flat(needle))
+}
+
+/** Строка экрана с образцом — для внятного отчёта о непрошедшем. */
+function line(text, part) {
+  const flat = (value) => value.replace(/\u00A0/g, ' ')
+  return flat(text).split('\n').find((each) => each.toLowerCase().includes(part.toLowerCase())) ?? ''
+}
+
+/** Переход по хеш-роутингу с ожиданием перерисовки. */
+async function go(hash) {
+  await run(`location.hash = ${JSON.stringify(hash)}`)
+  await sleep(700)
+}
+
+/** Ждёт, пока выражение на странице станет истинным. */
+async function waitFor(expression, ms = 10_000) {
+  for (let spent = 0; spent < ms; spent += 250) {
+    if ((await run(`Boolean(${expression})`)) === true) return true
+    await sleep(250)
+  }
+  return false
+}
+
+/** Сеть вкл/выкл — для проверки работы из кеша service worker. */
+async function offline(on) {
+  await send('Network.enable')
+  await send('Network.emulateNetworkConditions', {
+    offline: on,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  })
+}
+
+// ─── Сценарий ──────────────────────────────────────────────────────────────
+
+/**
+ * Обычный путь человека. Ровно то, что делают каждый день; экраны, куда
+ * никто не ходит, сюда добавлять незачем.
+ */
+async function scenario(profile) {
+  await send('Runtime.enable')
+  await send('Page.enable')
+
+  // Скачанное — во временный профиль, который удаляется после прогона.
+  // Без этого headless Chrome кладёт файлы в «Загрузки» человека.
+  await send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: profile })
+
+  // Разрешения — до первой загрузки: уже открытая страница выданное позже не видит.
+  // await send('Browser.grantPermissions', { origin: new URL(APP).origin, permissions: ['notifications'] })
+
+  await send('Page.navigate', { url: APP })
+  await sleep(2000)
+
+  const start = await screen()
+  check('главный экран открылся', start.trim().length > 0, start.replace(/\s+/g, ' ').slice(0, 80))
+  check('это «Месяц»', has(start, 'Месяц'), line(start, 'Месяц'))
+
+  // ── Приветствие первого запуска: база пуста, значит оно на месте.
+  check('приветствие показано на пустой базе', has(start, 'С чего начать'), line(start, 'С чего начать'))
+  await act(`byText('button', 'Понятно').click();`)
+  await sleep(700)
+  const afterWelcome = await screen()
+  check('«Понятно» убирает приветствие', !has(afterWelcome, 'С чего начать'), line(afterWelcome, 'Месяц'))
+
+  // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
+  await go('/help')
+  const help = await screen()
+  check('справка открылась', has(help, 'Справка'), line(help, 'Справка'))
+  await act(`startsWith('.fold__btn', 'Как считаются деньги').click();`)
+  await sleep(500)
+  const money = await screen()
+  check('в справке есть срок годности курса', has(money, 'не старше'), line(money, 'не старше'))
+  check(
+    'срок подставлен числом из константы',
+    /не старше чем\s+\d+\s+(день|дня|дней)/i.test(money.replace(/ /g, ' ')),
+    line(money, 'не старше'),
+  )
+
+  // ── Настройки: синхронизация и копия — экраны ядра, счётчики — свои.
+  await go('/settings')
+  const settings = await screen()
+  check('в настройках есть синхронизация', has(settings, 'Синхронизация'), line(settings, 'Синхронизация'))
+  check('в настройках есть копия данных', has(settings, 'Копия данных'), line(settings, 'Копия данных'))
+
+  await act(`startsWith('.fold__btn', 'О приложении').click();`)
+  await sleep(500)
+  const about = await screen()
+  check('раздел «О приложении» разворачивается', has(about, 'Что где лежит'), line(about, 'Что где лежит'))
+  // Именно строка счётчика, а не упоминание в описании приложения: без
+  // двоеточия с числом проверка прошла бы по соседнему абзацу.
+  check(
+    'хранилища посчитаны',
+    /Операции и итоги:\s*\d+/.test(about.replace(/ /g, ' ')),
+    line(about, 'Операции и итоги'),
+  )
+  check('видна версия схемы', has(about, 'Версия схемы данных'), line(about, 'Версия схемы данных'))
+
+  // ── Незнакомый адрес открывает приложение, а не пустоту.
+  await go('/nope')
+  const unknown = await screen()
+  check('незнакомый адрес ведёт на «Месяц»', has(unknown, 'Месяц'), line(unknown, 'Месяц'))
+
+  // ── Без сети — из кеша работника. Последним: дальше сети нет.
+  const controlled = await waitFor('navigator.serviceWorker?.controller')
+  await offline(true)
+  await send('Page.navigate', { url: APP })
+  await sleep(2000)
+  const cached = await screen()
+  check(
+    'без сети приложение открывается из кеша',
+    controlled && cached.trim().length > 0,
+    `работник ${controlled ? 'управляет' : 'не управляет'} страницей`,
+  )
+  await offline(false)
+}
+
+// ─── Прогон ────────────────────────────────────────────────────────────────
+
+let server
+let browser
+let profile
+
+try {
+  server = await startServer()
+  profile = mkdtempSync(join(tmpdir(), 'smoke-'))
+  browser = spawn(
+    findBrowser(),
+    [
+      '--headless=new',
+      `--remote-debugging-port=${DEBUG_PORT}`,
+      // Пустой временный профиль: своей базы у прогона нет и быть не должно.
+      `--user-data-dir=${profile}`,
+      '--no-first-run',
+      '--disable-gpu',
+      'about:blank',
+    ],
+    { stdio: 'ignore' },
+  )
+
+  await connect(await pageSocket())
+  await scenario(profile)
+} catch (failure) {
+  problems.push(failure instanceof Error ? failure.message : String(failure))
+} finally {
+  socket?.close()
+  browser?.kill()
+  await server?.close()
+}
+
+// Браузер отпускает профиль не мгновенно, и на Windows удаление сразу
+// после kill падает с EPERM. Не удалось — останется во временных.
+await sleep(500)
+if (profile) {
+  try {
+    rmSync(profile, { recursive: true, force: true })
+  } catch {
+    // Уберётся с временными файлами.
+  }
+}
+
+const failed = checks.filter((each) => !each.passed)
+
+for (const each of checks) {
+  console.log(`${each.passed ? '  ok' : 'НЕТ '} ${each.what}${each.seen ? ` — ${each.seen}` : ''}`)
+}
+
+if (problems.length > 0) {
+  console.log('\nБраузер сообщил об ошибках:')
+  for (const problem of problems) console.log(`  ${problem}`)
+}
+
+const bad = failed.length > 0 || problems.length > 0
+console.log(
+  bad
+    ? `\nПрогон не прошёл: проверок ${checks.length}, не сошлось ${failed.length}, ошибок ${problems.length}`
+    : `\nПрогон прошёл: ${checks.length} проверок, ошибок нет`,
+)
+
+process.exit(bad ? 1 : 0)
