@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CHANGES } from '../changes.ts'
 import { SYNCED_STORES } from '../app/model.ts'
-import { readProfile } from '../modules/ledger/profile.ts'
+import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useRates } from '../modules/ledger/useRates.ts'
@@ -51,6 +51,12 @@ export function Month() {
   const busy = ledger.status === 'loading' || entries.status === 'loading' || rates.status === 'loading'
   const profile = readProfile(ledger.data.profile)
 
+  // Валюта итогов: из настроек, а если их нет — единственная заведённая.
+  // Приложение доходит до записей и без настроек: валюта, счёт и операции
+  // приезжают одним файлом импорта. Упереться после этого в пустой экран
+  // значило бы довести человека до данных и не ответить на вопрос.
+  const currency = baseCurrencyOf(profile, ledger.data.currencies)
+
   return (
     <>
       <header className="screen-head">
@@ -74,26 +80,37 @@ export function Month() {
 
       {busy && <p className="muted">Считаю…</p>}
 
-      {!busy && !profile && (
+      {!busy && 'pick' in currency && (
         <p className="muted">
-          Чтобы считать итоги, нужно знать, в какой валюте их считать. Это <Link to="/books">настройки
-          учёта</Link> — там же заводятся счета и категории.
+          {currency.pick.length === 0
+            ? 'Считать пока нечего: ни одной валюты не заведено. Начните со '
+            : 'Валют заведено несколько, и надо выбрать, в какой считать итоги. Это '}
+          <Link to="/books">{currency.pick.length === 0 ? 'счетов и категорий' : 'настройки учёта'}</Link>
+          {currency.pick.length === 0 ? ' — там же заводятся валюты.' : '.'}
         </p>
       )}
 
-      {!busy && profile && (
-        <Report
-          month={month}
-          onMonth={setMonth}
-          data={{
-            entries: entries.all,
-            currencies: ledger.data.currencies,
-            rates: rates.all,
-            base: profile.baseCurrency,
-          }}
-          goal={profile.savingsGoal ?? null}
-          names={new Map(ledger.data.categories.map((each) => [each.id, each.name]))}
-        />
+      {!busy && 'code' in currency && (
+        <>
+          {currency.from === 'only' && (
+            <p className="basis">
+              Итоги считаются в {currency.code} — это единственная заведённая валюта. Станет больше —
+              основную выбирают в <Link to="/books">настройках учёта</Link>.
+            </p>
+          )}
+          <Report
+            month={month}
+            onMonth={setMonth}
+            data={{
+              entries: entries.all,
+              currencies: ledger.data.currencies,
+              rates: rates.all,
+              base: currency.code,
+            }}
+            goal={profile?.savingsGoal ?? null}
+            names={new Map(ledger.data.categories.map((each) => [each.id, each.name]))}
+          />
+        </>
       )}
     </>
   )

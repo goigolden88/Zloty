@@ -16,7 +16,7 @@
 
 import { nowIso } from '../../shared/core/dates.ts'
 import { ulid } from '../../shared/core/id.ts'
-import type { CurrencyCode, Profile } from '../../app/model.ts'
+import type { Currency, CurrencyCode, Profile } from '../../app/model.ts'
 
 /** Календарный месяц: отчётный период начинается первым числом. */
 export const DEFAULT_PERIOD_START_DAY = 1
@@ -41,6 +41,47 @@ export function extraProfiles(list: readonly Profile[]): Profile[] {
   const kept = readProfile(list)
   if (!kept) return []
   return list.filter((each) => !each.deleted && each.id !== kept.id)
+}
+
+/**
+ * В какой валюте считать итоги — и на каком основании.
+ *
+ * Настройки задают её прямо. Но приложение доходит до записей и без них:
+ * валюта, счёт и операции приезжают одним файлом импорта, а `profile`
+ * в формате нет. Упереться после этого в пустой «Месяц» — значит довести
+ * человека до данных и не ответить на вопрос, ради которого всё затевалось.
+ *
+ * **Единственная заведённая валюта — не догадка:** выбирать не из чего,
+ * и итог в ней единственно возможный. Экран всё равно называет основание
+ * (Р-07): человек должен видеть, откуда взялась валюта, а не считать,
+ * что её кто-то выбрал за него.
+ *
+ * Валют несколько, а настроек нет — вот тут выбор есть, и делает его
+ * человек, а не приложение.
+ */
+export type BaseCurrency =
+  /** Выбрана в настройках учёта. */
+  | { code: CurrencyCode; from: 'profile' }
+  /** Настроек нет, но валюта в справочнике одна. */
+  | { code: CurrencyCode; from: 'only' }
+  /** Считать не в чем: валют нет вовсе или их несколько, а выбор не сделан. */
+  | { pick: CurrencyCode[] }
+
+export function baseCurrencyOf(
+  profile: Profile | null,
+  currencies: readonly Currency[],
+): BaseCurrency {
+  const live = currencies.filter((each) => !each.deleted)
+
+  // Валюта настроек пропала из справочника — считать по ней нельзя:
+  // ни знаков после запятой, ни знака валюты у неё больше нет.
+  const chosen = profile ? live.find((each) => each.code === profile.baseCurrency) : undefined
+  if (chosen) return { code: chosen.code, from: 'profile' }
+
+  const only = live.length === 1 ? live[0] : undefined
+  if (only) return { code: only.code, from: 'only' }
+
+  return { pick: live.map((each) => each.code) }
 }
 
 /** Что вводит человек. Валюта обязательна, остальное — по желанию. */

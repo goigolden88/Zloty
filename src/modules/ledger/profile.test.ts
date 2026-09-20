@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Profile } from '../../app/model.ts'
+import type { Currency, Profile } from '../../app/model.ts'
 import {
+  baseCurrencyOf,
   DEFAULT_PERIOD_START_DAY,
   extraProfiles,
   MAX_PERIOD_START_DAY,
@@ -39,6 +40,41 @@ describe('одна запись настроек', () => {
   it('правка не заводит вторую запись', () => {
     const was = profile({ id: 'a', updatedAt: '2026-09-01T00:00:00.000Z' })
     expect(saveProfile(was, { baseCurrency: 'USD' }).id).toBe('a')
+  })
+})
+
+describe('в какой валюте считать итоги', () => {
+  const AT = '2026-09-20T10:00:00.000Z'
+
+  function currency(code: string, deleted?: true): Currency {
+    return { id: `c-${code}`, updatedAt: AT, code, name: code, decimals: 2, order: 0, ...(deleted ? { deleted } : {}) }
+  }
+
+  it('настройки задают валюту прямо', () => {
+    const chosen = profile({ id: 'a', updatedAt: AT, baseCurrency: 'USD' })
+    expect(baseCurrencyOf(chosen, [currency('RUB'), currency('USD')])).toEqual({ code: 'USD', from: 'profile' })
+  })
+
+  it('настроек нет, а валюта одна — считаем в ней: выбирать не из чего', () => {
+    expect(baseCurrencyOf(null, [currency('RUB')])).toEqual({ code: 'RUB', from: 'only' })
+  })
+
+  it('настроек нет, а валют несколько — выбор за человеком', () => {
+    expect(baseCurrencyOf(null, [currency('RUB'), currency('USD')])).toEqual({ pick: ['RUB', 'USD'] })
+  })
+
+  it('валют нет вовсе — считать не в чем', () => {
+    expect(baseCurrencyOf(null, [])).toEqual({ pick: [] })
+  })
+
+  it('удалённая валюта единственной не считается', () => {
+    expect(baseCurrencyOf(null, [currency('RUB'), currency('USD', true)])).toEqual({ code: 'RUB', from: 'only' })
+  })
+
+  it('валюта настроек пропала из справочника — по ней считать нельзя', () => {
+    const gone = profile({ id: 'a', updatedAt: AT, baseCurrency: 'EUR' })
+    expect(baseCurrencyOf(gone, [currency('RUB')])).toEqual({ code: 'RUB', from: 'only' })
+    expect(baseCurrencyOf(gone, [currency('RUB'), currency('USD')])).toEqual({ pick: ['RUB', 'USD'] })
   })
 })
 
