@@ -172,15 +172,30 @@ function span(entry: Entry): { from: string; to: string } | null {
  * (Р-02, «Известные слабые места»). Здесь он и ловится: до записи, с
  * объяснением, а не сводкой расхода вдвое больше настоящего.
  *
- * Переводы не в счёт: они не расход и не доход, а итог периода говорит
- * именно о расходе.
+ * **Столкновением считаются только записи одной природы** (Р-14): того же
+ * вида и с тем же признаком «особая». Разные природы в одном периоде — это
+ * не двойной счёт, а разбивка:
+ *
+ * — итог расхода и доход того же периода говорят о разном, и запретить
+ *   второе значило бы, что в период с итогом дохода вообще не внести;
+ * — обычный итог и особый итог того же периода — ровно то, как устроен лист
+ *   расходов прежней таблицы: три столбца по частоте трат. Без этой разбивки
+ *   «обычный месяц» на истории был бы завышен на все особые траты — то
+ *   самое число, ради которого история и переносится (Р-07).
+ *
+ * Переводы не в счёт вовсе: они не расход и не доход.
  */
 export function periodClash(draft: EntryDraft, data: EntryData, accountId: string): string | null {
   const mine = draft.period ?? (draft.date ? { from: draft.date, to: draft.date } : null)
   if (!mine) return null
+  if (draft.kind === 'transfer') return null
 
   const onAccount = data.entries.filter(
-    (each) => !each.deleted && each.accountId === accountId && each.kind !== 'transfer',
+    (each) =>
+      !each.deleted &&
+      each.accountId === accountId &&
+      each.kind === draft.kind &&
+      Boolean(each.special) === Boolean(draft.special),
   )
 
   if (draft.period) {
@@ -197,7 +212,7 @@ export function periodClash(draft: EntryDraft, data: EntryData, accountId: strin
     const twin = onAccount.find((each) => each.period && overlap(mine, each.period))
     if (twin) {
       return (
-        `на этом счёте уже есть итог за ${formatDate(twin.period?.from ?? '')} — ` +
+        `на этом счёте уже есть такой же итог за ${formatDate(twin.period?.from ?? '')} — ` +
         `${formatDate(twin.period?.to ?? '')}, и периоды пересекаются`
       )
     }

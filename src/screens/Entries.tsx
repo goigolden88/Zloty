@@ -247,7 +247,7 @@ function EntryForm({
     else draft.date = date
     if (categoryId && kind !== 'transfer') draft.categoryId = categoryId
     if (toAccountId && kind === 'transfer') draft.toAccountId = toAccountId
-    if (special && kind === 'expense') draft.special = true
+    if (special && (kind === 'expense' || kind === 'period')) draft.special = true
     if (forMonth) draft.for = forMonth
     if (note.trim()) draft.note = note
 
@@ -347,11 +347,20 @@ function EntryForm({
         </label>
       )}
 
-      {kind === 'expense' && (
-        <label className="check">
-          <input type="checkbox" checked={special} onChange={(event) => setSpecial(event.target.checked)} />
-          Особая трата: в обычный месяц не идёт
-        </label>
+      {(kind === 'expense' || kind === 'period') && (
+        <>
+          <label className="check">
+            <input type="checkbox" checked={special} onChange={(event) => setSpecial(event.target.checked)} />
+            {kind === 'period' ? 'Итог особых трат за период' : 'Особая трата: в обычный месяц не идёт'}
+          </label>
+          {kind === 'period' && (
+            <p className="muted">
+              Лист прежней таблицы делит период на обычные и особые траты. Внесите их двумя итогами:
+              обычный — без пометки, особый — с ней. Иначе «обычный месяц» на истории окажется завышен
+              на все особые траты.
+            </p>
+          )}
+        </>
       )}
 
       {kind !== 'period' && (

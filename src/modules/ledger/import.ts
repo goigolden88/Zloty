@@ -698,10 +698,13 @@ export function replacedTotals(data: LedgerImportData, incoming: readonly Entry[
     const period = total.period
     if (!period) continue
 
+    // Той же природы, что итог (Р-14): особые операции не заменяют обычный
+    // итог, а обычные — особый.
     const covering = incoming.filter(
       (each) =>
         each.accountId === total.accountId &&
         each.kind === total.kind &&
+        Boolean(each.special) === Boolean(total.special) &&
         each.date !== undefined &&
         each.date >= period.from &&
         each.date <= period.to,

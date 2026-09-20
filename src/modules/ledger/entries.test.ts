@@ -164,6 +164,38 @@ describe('либо итог, либо операции (Р-02)', () => {
     expect(made(makeEntry(wants, data([move]))).period?.to).toBe('2026-09-30')
   })
 
+  it('обычный и особый итоги за один период уживаются (Р-14)', () => {
+    const usual: Entry = { ...total, id: 'e-4' }
+    const special = draft({
+      date: undefined,
+      categoryId: undefined,
+      special: true,
+      period: { from: '2026-09-01', to: '2026-09-30' },
+    })
+    expect(made(makeEntry(special, data([usual]))).special).toBe(true)
+  })
+
+  it('два особых итога на тот же период всё же не уживаются', () => {
+    const special: Entry = { ...total, id: 'e-5', special: true }
+    const another = draft({
+      date: undefined,
+      categoryId: undefined,
+      special: true,
+      period: { from: '2026-09-10', to: '2026-10-05' },
+    })
+    expect(problem(makeEntry(another, data([special])))).toContain('периоды пересекаются')
+  })
+
+  it('доход в период, покрытый итогом расхода, вносится: это разные величины', () => {
+    const income = draft({ kind: 'income', date: '2026-09-15', categoryId: 'cat-pay' })
+    expect(made(makeEntry(income, data([total]))).kind).toBe('income')
+  })
+
+  it('особая операция не спорит с обычным итогом того же периода', () => {
+    const odd = draft({ date: '2026-09-15', special: true })
+    expect(made(makeEntry(odd, data([total]))).special).toBe(true)
+  })
+
   it('удалённая запись не мешает: надгробие — не операция', () => {
     const gone: Entry = { ...operation, deleted: true }
     const wants = draft({ date: undefined, categoryId: undefined, period: { from: '2026-09-01', to: '2026-09-30' } })
