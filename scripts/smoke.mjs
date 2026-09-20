@@ -328,6 +328,11 @@ async function scenario(profile) {
     has(empty, 'Доход за этот месяц не внесён'),
     line(empty, 'не внесён'),
   )
+  check(
+    'и что обычный месяц считать не по чему — тоже словами',
+    has(empty, 'Считать не по чему'),
+    line(empty, 'Считать не по чему'),
+  )
 
   // ── Операции: ввод руками и правило «либо итог, либо операции» (Р-02).
   //    Второе проверяется отказом: правило, которое некому нарушить,
@@ -437,6 +442,44 @@ async function scenario(profile) {
   const afterImport = await screen()
   check('загруженная операция видна в месяце', has(afterImport, '120,50'), line(afterImport, '120,50'))
 
+  // ── История прежней таблицы (Р-14): счёт истории заводится тем же файлом,
+  //    период приходит двумя итогами — обычным и особым.
+  const HISTORY = JSON.stringify({
+    format: 'zloty-import',
+    version: 1,
+    accounts: [{ name: 'Старая таблица', currency: 'RUB', kind: 'savings', ledgerOnly: true }],
+    entries: [
+      { kind: 'expense', account: 'Старая таблица', amount: 20000, periodFrom: '2026-07-01', periodTo: '2026-07-31', note: 'Обычные траты таблицы' },
+      { kind: 'expense', account: 'Старая таблица', amount: 5000, periodFrom: '2026-07-01', periodTo: '2026-07-31', special: true, note: 'Особые траты таблицы' },
+    ],
+  })
+
+  await go('/import')
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(HISTORY)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  await act(`startsWith('button', 'Загрузить ').click();`)
+  await sleep(900)
+  const history = await screen()
+  check('история загрузилась', has(history, 'Загружено записей'), line(history, 'Загружено записей'))
+  check(
+    'счёт истории в список выписок не попал',
+    !has(history, 'Старая таблица'),
+    'выписки на счёт истории не грузятся никогда',
+  )
+
+  await go('/books')
+  const withHistory = await screen()
+  check(
+    'счёт истории помечен как счёт истории',
+    has(withHistory, 'счёт истории'),
+    line(withHistory, 'счёт истории'),
+  )
+
   // ── «Месяц»: главный вопрос приложения. Проверяется и то, что доход,
   //    которого нет, назван честно, а не показан нулём (Р-07).
   // Вносим доход — и экран обязан ответить числом с основанием.
@@ -470,8 +513,12 @@ async function scenario(profile) {
   )
   check('норма сбережений показана долей', /\d+% дохода/.test(month), line(month, '% дохода'))
   check('видно, из чего вышло', has(month, 'Расход обычный'), line(month, 'Расход обычный'))
-  check('обычный месяц честно говорит, что считать не по чему', has(month, 'Считать не по чему'), line(month, 'Считать не по чему'))
   check('есть столбики по месяцам', has(month, 'Расход по месяцам'), line(month, 'Расход по месяцам'))
+  check(
+    'обычный месяц опёрся на период прежней таблицы (Р-12, п. 6)',
+    has(month, 'прежней таблицы'),
+    line(month, 'прежней таблицы'),
+  )
 
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')

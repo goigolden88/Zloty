@@ -74,6 +74,18 @@ describe('счета', () => {
   })
 })
 
+describe('счёт истории (Р-12, п. 6)', () => {
+  it('заводится тем же файлом, которым переносится история', () => {
+    const plan = importAccounts([{ name: 'Таблица', currency: 'RUB', ledgerOnly: true }], base(), context())
+    expect(plan.writes.accounts?.[0]?.ledgerOnly).toBe(true)
+  })
+
+  it('обычный счёт пометки не получает', () => {
+    const plan = importAccounts([{ name: 'Зелёный банк', currency: 'RUB' }], base(), context())
+    expect('ledgerOnly' in (plan.writes.accounts?.[0] ?? {})).toBe(false)
+  })
+})
+
 describe('категории', () => {
   it('сторона обязательна и понимается по-русски тоже', () => {
     const plan = importCategories(
@@ -228,6 +240,35 @@ describe('склейка встречных переводов (Р-12, п. 3)', 
   it('две стороны на одном счёте не склеиваются: это движение внутри счёта', () => {
     const same = { ...back, account: 'Синий банк' }
     expect(importEntries([out, same], base(), context()).writes.entries).toHaveLength(2)
+  })
+})
+
+describe('итог импортом не ложится на операции (Р-02, Р-14)', () => {
+  const operation: Entry = {
+    id: 'e-1',
+    updatedAt: AT,
+    kind: 'expense',
+    accountId: BANK.id,
+    money: { amount: 5000, currency: 'RUB' },
+    date: '2026-09-10',
+  }
+
+  const total = { kind: 'expense', account: 'Синий банк', amount: 9000, periodFrom: '2026-09-01', periodTo: '2026-09-30' }
+
+  it('называется с причиной, а не записывается молча', () => {
+    const plan = importEntries([total], base({ entries: [operation] }), context())
+    expect(plan.writes.entries ?? []).toHaveLength(0)
+    expect(plan.issues[0]?.reason).toContain('уже есть операции')
+  })
+
+  it('особый итог не спорит с обычными операциями того же периода', () => {
+    const plan = importEntries([{ ...total, special: true }], base({ entries: [operation] }), context())
+    expect(plan.writes.entries).toHaveLength(1)
+  })
+
+  it('на другом счёте итог ложится свободно', () => {
+    const elsewhere = { ...total, account: 'Наличные' }
+    expect(importEntries([elsewhere], base({ entries: [operation] }), context()).writes.entries).toHaveLength(1)
   })
 })
 

@@ -130,6 +130,8 @@ export const accountsImportSpec: ImportSpec = {
     '"name" — название: банк, «Наличные». Обязательно',
     '"currency" — код валюты счёта. Обязательно',
     '"kind" — "savings" для денег, которыми пользуются, "investment" для вложений. Не знаешь — не пиши',
+    '"ledgerOnly" — true только для счёта, на который переносится история прежней таблицы. ' +
+      'Выписки на такой счёт не загружаются никогда. Не уверен — не пиши',
   ],
   example: [{ name: 'Наличные', currency: 'RUB', kind: 'savings' }],
 }
@@ -164,7 +166,15 @@ export function importAccounts(raw: unknown, data: LedgerImportData, ctx: Import
     }
 
     const kind = textOf(record.kind) === 'investment' ? 'investment' : 'savings'
-    const account = { ...createAccount(known, { name, currency, kind }), id: ctx.newId(), updatedAt: ctx.now }
+    // Счёт истории заводится тем же файлом, которым переносится история
+    // (Р-12, п. 6): иначе перенос требует руки до файла и перестаёт быть
+    // воспроизводимым одним действием.
+    const ledgerOnly = record.ledgerOnly === true
+    const account = {
+      ...createAccount(known, { name, currency, kind, ledgerOnly }),
+      id: ctx.newId(),
+      updatedAt: ctx.now,
+    }
     known.push(account)
     created.push(account)
   }
@@ -441,6 +451,20 @@ export function importEntries(raw: unknown, data: LedgerImportData, ctx: ImportC
     }
 
     if (record.special === true && kind === 'expense') entry.special = true
+
+    // Итог за период не ложится туда, где уже есть операции той же природы
+    // (Р-02, Р-14). Ручной ввод это проверяет, и импорт обязан тоже: без
+    // проверки расход посчитался бы дважды — и молча.
+    const covered = entry.period ? operationsInside(data.entries, entry) : null
+    if (covered) {
+      issue(
+        title,
+        `на счёте «${account.name}» внутри этого периода уже есть операции (например, за ` +
+          `${formatDate(covered.date ?? '')}). На один счёт в одном периоде — либо итог, либо операции`,
+      )
+      continue
+    }
+
     const forMonth = dayOrMonthOf(record.for)
     if (forMonth && /^\d{4}-\d{2}$/.test(forMonth)) entry.for = forMonth
     const bankText = textOf(record.bankText)
@@ -537,6 +561,30 @@ function whenOf(record: Record<string, unknown>): When {
   const date = dayOf(record.date)
   if (!date) return { problem: `дата «${shown(record.date)}» — не ГГГГ-ММ-ДД` }
   return { date }
+}
+
+/**
+ * Операция той же природы внутри периода итога — или null, если её нет.
+ *
+ * «Той же природы» — тот же счёт, тот же вид и тот же признак «особая»
+ * (Р-14): обычный итог и особые операции того же периода говорят о разном.
+ */
+function operationsInside(entries: readonly Entry[], total: Entry): Entry | null {
+  const period = total.period
+  if (!period) return null
+  return (
+    entries.find(
+      (each) =>
+        !each.deleted &&
+        !each.period &&
+        each.accountId === total.accountId &&
+        each.kind === total.kind &&
+        Boolean(each.special) === Boolean(total.special) &&
+        each.date !== undefined &&
+        each.date >= period.from &&
+        each.date <= period.to,
+    ) ?? null
+  )
 }
 
 /**

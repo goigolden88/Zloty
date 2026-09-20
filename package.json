@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
+    "history": "node scripts/check-history.mjs",
     "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
