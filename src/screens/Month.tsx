@@ -224,7 +224,8 @@ function Report({
         <h2>Обычный месяц</h2>
         {usual === null ? (
           <p className="muted">
-            Считать не по чему: за прошлые {plural(USUAL_MONTHS, ['месяц', 'месяца', 'месяцев'])} записей нет.
+            Считать не по чему: за прошлые {USUAL_MONTHS}{' '}
+            {plural(USUAL_MONTHS, ['месяц', 'месяца', 'месяцев'])} записей нет.
             Обычный месяц появится, когда наберётся хотя бы один прошлый месяц с записями.
           </p>
         ) : (
@@ -267,20 +268,34 @@ function Report({
 
       <div className="block">
         <h2>Расход по месяцам</h2>
-        <BarChart
-          items={bars.map((bar): BarItem => ({
-            value: bar.amount > 0 ? bar.amount : null,
-            label: MONTHS_SHORT[Number(bar.month.slice(5, 7)) - 1] ?? bar.month,
-            title: `${formatMonth(bar.month)}: ${bar.amount > 0 ? show(bar.amount) : 'записей нет'}`,
-            muted: bar.amount === 0,
-          }))}
-          label="Расход по месяцам"
-          tickText={show}
-          peakText={show}
-        />
-        <p className="basis">
-          итоги периодов в столбики не входят: по месяцам они не дробятся
-        </p>
+        {/* График, у которого нет ни одного столбика, рисует ось с делением
+            в одну копейку — число, которого нет в данных. Пустой график
+            не объясняет ничего, а объяснить надо: расход записан итогами
+            за период, а они по месяцам не дробятся (Р-12, п. 6). */}
+        {bars.some((bar) => bar.amount > 0) ? (
+          <>
+            <BarChart
+              items={bars.map((bar): BarItem => ({
+                value: bar.amount > 0 ? bar.amount : null,
+                label: MONTHS_SHORT[Number(bar.month.slice(5, 7)) - 1] ?? bar.month,
+                title: `${formatMonth(bar.month)}: ${bar.amount > 0 ? show(bar.amount) : 'записей нет'}`,
+                muted: bar.amount === 0,
+              }))}
+              label="Расход по месяцам"
+              tickText={show}
+              peakText={show}
+            />
+            <p className="basis">
+              итоги периодов в столбики не входят: по месяцам они не дробятся
+            </p>
+          </>
+        ) : (
+          <p className="muted">
+            Рисовать нечего: за последние {BARS} {plural(BARS, ['месяц', 'месяца', 'месяцев'])} нет ни одной
+            операции с датой. Расход, записанный итогами за период, в столбики не входит — по месяцам
+            он не дробится.
+          </p>
+        )}
       </div>
     </>
   )
