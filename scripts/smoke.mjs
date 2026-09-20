@@ -263,6 +263,62 @@ async function scenario(profile) {
   const afterWelcome = await screen()
   check('«Понятно» убирает приветствие', !has(afterWelcome, 'С чего начать'), line(afterWelcome, 'Месяц'))
 
+  // ── Справочники: без них операцию некуда записать. Заводим валюту, счёт
+  //    и категорию — ровно тот путь, которым человек начинает.
+  await go('/books')
+  const books = await screen()
+  check('экран «Счета и категории» открылся', has(books, 'Счета и категории'), line(books, 'Счета и категории'))
+  check('пустой справочник просит завести валюту', has(books, 'Сначала заведите валюту'), line(books, 'Сначала заведите'))
+
+  await act(`
+    set(document.querySelector('input[placeholder="RUB"]'), 'RUB');
+    set(document.querySelector('input[placeholder="Рубль"]'), 'Рубль');
+    byText('button', 'Добавить валюту').click();
+  `)
+  await sleep(700)
+  const withCurrency = await screen()
+  check('валюта завелась', has(withCurrency, 'RUB — Рубль'), line(withCurrency, 'RUB'))
+
+  await act(`byText('button', 'Завести счёт').click();`)
+  await sleep(500)
+  await act(`
+    set(document.querySelector('input[placeholder="Банк или «Наличные»"]'), 'Синий банк');
+    byText('button', 'Завести').click();
+  `)
+  await sleep(700)
+  const withAccount = await screen()
+  check('счёт завёлся', has(withAccount, 'Синий банк'), line(withAccount, 'Синий банк'))
+
+  await act(`
+    const field = document.querySelector('input[placeholder="Еда, транспорт"]');
+    set(field, 'Еда');
+    field.closest('.row').querySelector('button').click();
+  `)
+  await sleep(700)
+  const withCategory = await screen()
+  check('категория завелась', has(withCategory, 'Еда'), line(withCategory, 'Еда'))
+
+  // Настройки учёта — свойство данных, а не устройства: базовая валюта
+  // обязана сохраниться и попасть в подпись блока.
+  await act(`
+    const base = [...document.querySelectorAll('select')].find((each) => each.querySelector('option[value="RUB"]'));
+    set(base, 'RUB');
+    base.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Сохранить').click();`)
+  await sleep(700)
+  const saved = await screen()
+  check('настройки учёта сохранились', has(saved, 'Сохранено'), line(saved, 'Сохранено'))
+
+  // Записанное обязано пережить перезагрузку: это IndexedDB, а не состояние
+  // экрана. Проверка ловит и то, что запись вообще дошла до базы.
+  await send('Page.navigate', { url: APP })
+  await sleep(2000)
+  await go('/books')
+  const again = await screen()
+  check('справочники пережили перезагрузку', has(again, 'Синий банк') && has(again, 'RUB'), line(again, 'Синий банк'))
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()

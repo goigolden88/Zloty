@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom'
-import { config } from '../app/config.ts'
 import { CHANGES } from '../changes.ts'
 import { SYNCED_STORES } from '../app/model.ts'
 import { WhatsNew } from '../shared/screens/WhatsNew.tsx'
@@ -26,6 +25,9 @@ export function Month() {
         <div className="screen-head__row">
           <h1>Месяц</h1>
           <div className="screen-head__tools">
+            <Link className="gear" to="/books" aria-label="Счета и категории">
+              ₽
+            </Link>
             <Link className="gear" to="/help" aria-label="Справка">
               ?
             </Link>
@@ -39,13 +41,13 @@ export function Month() {
       {base.welcome && <Welcome onDone={base.dismissWelcome} empty={base.empty} />}
 
       <p className="muted">
-        Учёта здесь пока нет: {config.name} установлены и работают без сети, а счета, операции и ответ «сколько
-        я отложил» появятся на следующем шаге.
+        Операций здесь пока нет, а ответ «сколько я отложил» появится вместе с ними. Начать можно с того, без
+        чего операцию некуда записать: <Link to="/books">счетов и категорий</Link>.
       </p>
 
       <p className="muted">
-        Пока можно настроить синхронизацию и файл-копию в «Настройках» — данные, которые появятся, сразу будут
-        уезжать на второе устройство.
+        Синхронизация и файл-копия — в <Link to="/settings">«Настройках»</Link>: всё, что вы заведёте, сразу
+        будет уезжать на второе устройство.
       </p>
     </>
   )

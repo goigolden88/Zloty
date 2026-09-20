@@ -4,6 +4,7 @@ import { config } from './app/config.ts'
 import { db, sync } from './app/core.ts'
 import { CoreProvider } from './shared/ui/core.tsx'
 import { Layout, type Tab } from './shared/ui/Layout.tsx'
+import { Books } from './screens/Books.tsx'
 import { Help } from './screens/Help.tsx'
 import { Month } from './screens/Month.tsx'
 import { Settings } from './screens/Settings.tsx'
@@ -35,6 +36,9 @@ export function App() {
         <Routes>
           <Route path="/" element={<Layout tabs={TABS} />}>
             <Route index element={<Month />} />
+            {/* Справочники учёта: заводят один раз, правят редко — потому
+                ссылкой из шапки «Месяца», а не вкладкой. */}
+            <Route path="books" element={<Books />} />
             <Route path="settings" element={<Settings />} />
             {/* Справка: вход — «?» в шапке «Месяца». */}
             <Route path="help" element={<Help />} />
