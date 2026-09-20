@@ -365,6 +365,68 @@ async function scenario(profile) {
   await act(`byText('button', 'Отмена').click();`)
   await sleep(400)
 
+  // ── Импорт: единственная дверь в данные извне (Р-09). Проверяется и то,
+  //    что повтор не записывается второй раз, — на этом стоит весь Р-12, п. 4.
+  await go('/import')
+  const importScreen = await screen()
+  check('экран импорта открылся', has(importScreen, 'Загрузить выписку'), line(importScreen, 'Загрузить выписку'))
+  check(
+    'сказано, с какого дня брать выписку',
+    has(importScreen, 'берите выписку с этого дня'),
+    line(importScreen, 'берите выписку'),
+  )
+
+  // Выдуманная выписка: настоящих данных в прогоне нет и быть не должно.
+  const FILE = JSON.stringify({
+    format: 'zloty-import',
+    version: 1,
+    categories: [{ name: 'Транспорт', side: 'expense' }],
+    entries: [
+      { kind: 'expense', account: 'Синий банк', amount: 120.5, date: '2026-09-18', category: 'Транспорт', bankText: 'МЕТРО 120.50' },
+      { kind: 'income', account: 'Синий банк', amount: 30, date: '2026-09-18', category: 'Кэшбэк', bankText: 'КЭШБЭК' },
+    ],
+  })
+
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(FILE)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  const plan = await screen()
+  check('сводка показана до записи', has(plan, 'Добавится'), line(plan, 'Добавится'))
+
+  await act(`startsWith('button', 'Загрузить ').click();`)
+  await sleep(900)
+  const loaded = await screen()
+  check('импорт записал', has(loaded, 'Загружено записей'), line(loaded, 'Загружено записей'))
+
+  // Тот же файл второй раз: ext обязан отсечь всё до единой записи.
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(FILE)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  const repeat = await screen()
+  check('повтор выписки не записывается', has(repeat, 'Добавлять нечего'), line(repeat, 'Добавлять нечего'))
+  check('и про пропущенное сказано числом', has(repeat, 'Уже есть'), line(repeat, 'Уже есть'))
+
+  // Промпт обязан знать мои счета и категории — иначе беседа разложит наугад.
+  await act(`startsWith('.fold__btn', 'Как подготовить файл').click();`)
+  await sleep(400)
+  await act(`startsWith('.fold__btn', 'Показать промпт').click();`)
+  await sleep(400)
+  const prompt = await screen()
+  check('промпт знает мои счета', has(prompt, '«Синий банк» (RUB)'), line(prompt, 'Синий банк» (RUB)'))
+  check('промпт знает мои категории', has(prompt, 'Расходные категории'), line(prompt, 'Расходные категории'))
+
+  await go('/entries')
+  const afterImport = await screen()
+  check('загруженная операция видна в месяце', has(afterImport, '120,50'), line(afterImport, '120,50'))
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()

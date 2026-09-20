@@ -35,6 +35,9 @@ export function Entries() {
         <div className="screen-head__row">
           <h1>Операции</h1>
           <div className="screen-head__tools">
+            <Link className="gear" to="/import" aria-label="Загрузить выписку">
+              ↓
+            </Link>
             <Link className="gear" to="/books" aria-label="Счета и категории">
               ₽
             </Link>
@@ -87,7 +90,8 @@ export function Entries() {
           <h2>Операции месяца</h2>
           {shown.operations.length === 0 ? (
             <p className="muted">
-              За этот месяц руками ничего не внесено. Выписки банков придут импортом — он следующим шагом.
+              За этот месяц ничего не внесено. Выписку банка можно{' '}
+              <Link to="/import">загрузить</Link>, а руками вносится то, чего в выписке не будет.
             </p>
           ) : (
             <ul className="plain">

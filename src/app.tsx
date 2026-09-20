@@ -7,6 +7,7 @@ import { Layout, type Tab } from './shared/ui/Layout.tsx'
 import { Books } from './screens/Books.tsx'
 import { Entries } from './screens/Entries.tsx'
 import { Help } from './screens/Help.tsx'
+import { Import } from './screens/Import.tsx'
 import { Month } from './screens/Month.tsx'
 import { Settings } from './screens/Settings.tsx'
 
@@ -41,6 +42,7 @@ export function App() {
             {/* Справочники учёта: заводят один раз, правят редко — потому
                 ссылкой из шапки «Месяца», а не вкладкой. */}
             <Route path="entries" element={<Entries />} />
+            <Route path="import" element={<Import />} />
             <Route path="books" element={<Books />} />
             <Route path="settings" element={<Settings />} />
             {/* Справка: вход — «?» в шапке «Месяца». */}
