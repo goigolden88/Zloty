@@ -4,6 +4,7 @@ import { db } from '../app/core.ts'
 import type { Category, Entry } from '../app/model.ts'
 import { active, activeCategories } from '../modules/ledger/ledger.ts'
 import { entriesOfMonth, makeEntry, type EntryData, type EntryDraft } from '../modules/ledger/entries.ts'
+import { dueThisMonth, enterAll, enterRecurring, leftToPay, type Due } from '../modules/ledger/recurring.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
@@ -85,6 +86,8 @@ export function Entries() {
             </div>
           )}
 
+          <RecurringBlock ledger={ledger.data} entries={entries.all} month={month} />
+
           <Periods list={shown.periods} ledger={ledger.data} />
 
           <h2>Операции месяца</h2>
@@ -103,6 +106,101 @@ export function Entries() {
         </>
       )}
     </>
+  )
+}
+
+// ─── Регулярные (Р-06) ─────────────────────────────────────────────────────
+
+/**
+ * Что ждёт этого месяца. Шаблон сам ничего не пишет: запись появляется
+ * тапом «Внести» — или сама, когда платёж придёт выпиской.
+ *
+ * Внесённое из списка не исчезает: человеку нужно видеть, что платёж был,
+ * а не только то, чего не хватает.
+ */
+function RecurringBlock({
+  ledger,
+  entries,
+  month,
+}: {
+  ledger: LedgerData
+  entries: readonly Entry[]
+  month: string
+}) {
+  const [problems, setProblems] = useState<string[]>([])
+  const data = {
+    recurring: ledger.recurring,
+    categories: ledger.categories,
+    accounts: ledger.accounts,
+    entries,
+  }
+  const due = dueThisMonth(data, month)
+  if (due.length === 0) return null
+
+  const left = due.filter((each) => each.entries.length === 0)
+
+  async function enterOne(one: Due) {
+    const made = enterRecurring(one.recurring, data, month, today())
+    if ('problem' in made) return setProblems([made.problem])
+    setProblems([])
+    await db.put('entries', made.entry)
+  }
+
+  async function all() {
+    const made = enterAll(data, month, today())
+    setProblems(made.problems)
+    if (made.entries.length > 0) await db.putMany('entries', made.entries)
+  }
+
+  return (
+    <Fold
+      id="entries:recurring"
+      title="Регулярные"
+      summary={
+        <span className="muted">
+          {left.length === 0 ? 'все внесены' : `не внесено ${left.length} из ${due.length}`}
+        </span>
+      }
+    >
+      <ul className="plain">
+        {due.map((one) => (
+          <li key={one.recurring.id} className="line">
+            <div className="line__main">
+              <b>{one.recurring.name}</b>{' '}
+              <span className="muted">
+                · ждём {formatMoney(one.recurring.expected, findCurrency(ledger.currencies, one.recurring.expected.currency))}
+              </span>
+              {one.entries.length > 0 && (
+                <div className="basis">
+                  внесено {formatMoney({ amount: one.paid, currency: one.recurring.expected.currency }, findCurrency(ledger.currencies, one.recurring.expected.currency))}
+                  {leftToPay(one) !== 0 &&
+                    ` — это ${leftToPay(one) > 0 ? 'меньше' : 'больше'} ожидаемого`}
+                </div>
+              )}
+            </div>
+            {one.entries.length === 0 && (
+              <button type="button" onClick={() => void enterOne(one)}>
+                Внести
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {left.length > 1 && (
+        <div className="row">
+          <button type="button" className="btn--primary" onClick={() => void all()}>
+            Внести все — {left.length}
+          </button>
+        </div>
+      )}
+
+      {problems.map((problem) => (
+        <p key={problem} className="error">
+          {problem}
+        </p>
+      ))}
+    </Fold>
   )
 }
 

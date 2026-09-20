@@ -37,7 +37,7 @@ import {
   type ImportPlan,
   type ImportSpec,
 } from '../../shared/core/importing.ts'
-import type { Account, Category, Currency, Entry, Rate, StoreRecord } from '../../app/model.ts'
+import type { Account, Category, Currency, Entry, Rate, Recurring, StoreRecord } from '../../app/model.ts'
 import { findCurrency, formatMoney, parseAmount, suggestDecimals } from '../money/money.ts'
 import { createAccount, createCategory, createCurrency, findByName, sortedCurrencies } from './ledger.ts'
 
@@ -51,6 +51,7 @@ export type LedgerImportData = {
   currencies: readonly Currency[]
   accounts: readonly Account[]
   categories: readonly Category[]
+  recurring: readonly Recurring[]
   entries: readonly Entry[]
   rates: readonly Rate[]
 }
@@ -329,6 +330,7 @@ export const entriesImportSpec: ImportSpec = {
     '"bankText" — строка выписки как есть. Пиши её всегда: по ней потом видно, что это было',
     '"bankId" — код операции из выписки, если банк его даёт',
     '"note" — что стоит запомнить: например, что операция была в другой валюте',
+    '"recurring" — название регулярной из списка ниже, если этот платёж — она: связь, интернет, страховка. Не уверен — не пиши',
     '"periodFrom" и "periodTo" — вместо "date", если это итог за период целиком, без отдельных операций',
   ],
   example: [
@@ -451,6 +453,15 @@ export function importEntries(raw: unknown, data: LedgerImportData, ctx: ImportC
     }
 
     if (record.special === true && kind === 'expense') entry.special = true
+
+    // «Выписка отмечает сама» (Р-06): платёж, узнанный как регулярный, гасит
+    // строку блока сам, и вносить его руками второй раз не надо.
+    const recurringName = textOf(record.recurring)
+    if (recurringName) {
+      const template = findByName(data.recurring, recurringName)
+      if (template) entry.recurringId = template.id
+      else issue(title, `регулярной «${recurringName}» нет — запись загружена без пометки регулярной`)
+    }
 
     // Итог за период не ложится туда, где уже есть операции той же природы
     // (Р-02, Р-14). Ручной ввод это проверяет, и импорт обязан тоже: без
@@ -677,6 +688,11 @@ export function ledgerPromptNotes(data: LedgerImportData, lastDays: Map<string, 
   const income = data.categories.filter((each) => !each.deleted && !each.archived && each.side === 'income')
   if (expense.length > 0) lines.push('', `Расходные категории: ${expense.map((each) => each.name).join(', ')}.`)
   if (income.length > 0) lines.push('', `Доходные категории: ${income.map((each) => each.name).join(', ')}.`)
+
+  const recurring = data.recurring.filter((each) => !each.deleted)
+  if (recurring.length > 0) {
+    lines.push('', `Мои регулярные: ${recurring.map((each) => each.name).join(', ')}.`)
+  }
 
   const samples = promptSamples(data)
   if (samples.length > 0) {

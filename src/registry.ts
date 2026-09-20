@@ -62,6 +62,7 @@ function ledgerData(data: Data): LedgerImportData {
     currencies: data.currencies,
     accounts: data.accounts,
     categories: data.categories,
+    recurring: data.recurring,
     entries: data.entries,
     rates: data.rates,
   }

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
-import type { Account, Category } from '../app/model.ts'
+import type { Account, Category, Recurring } from '../app/model.ts'
 import {
   accountProblem,
   active,
@@ -29,9 +29,15 @@ import {
   saveProfile,
   type ProfileDraft,
 } from '../modules/ledger/profile.ts'
+import {
+  createRecurring,
+  recurringProblem,
+  updateRecurring,
+  type RecurringDraft,
+} from '../modules/ledger/recurring.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
-import { suggestDecimals } from '../modules/money/money.ts'
-import { plural } from '../shared/core/dates.ts'
+import { findCurrency, formatMoney, parseAmount, suggestDecimals } from '../modules/money/money.ts'
+import { monthOf, plural, today } from '../shared/core/dates.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
 
 /**
@@ -69,6 +75,7 @@ export function Books() {
         <>
           <Accounts data={ledger.data} />
           <Categories data={ledger.data} />
+          <Recurrings data={ledger.data} />
           <Currencies data={ledger.data} />
           <LedgerSettings data={ledger.data} />
         </>
@@ -429,6 +436,220 @@ function RenameField({
       }}
       onBlur={() => onSave(text)}
     />
+  )
+}
+
+// ─── Регулярные (Р-06) ─────────────────────────────────────────
+
+/**
+ * Шаблоны того, что повторяется: связь, интернет, страховка, стипендия.
+ * Сами они ничего не пишут — запись появляется тапом на «Операциях»
+ * или приходит выпиской. Месяц целиком не копируется, и в этом весь смысл.
+ */
+function Recurrings({ data }: { data: LedgerData }) {
+  const [editing, setEditing] = useState<Recurring | null>(null)
+  const [adding, setAdding] = useState(false)
+  const live = data.recurring.filter((each) => !each.deleted).sort((a, b) => a.order - b.order)
+
+  async function save(draft: RecurringDraft) {
+    const record = editing ? updateRecurring(editing, draft) : createRecurring(data.recurring, draft)
+    await db.put('recurring', record)
+    setEditing(null)
+    setAdding(false)
+  }
+
+  return (
+    <Fold
+      id="books:recurring"
+      title="Регулярные"
+      summary={<span className="muted">{count(live.length, ['шаблон', 'шаблона', 'шаблонов'])}</span>}
+      folded
+    >
+      <p className="muted">
+        Шаблон помнит, чего ждать каждый месяц, но сам ничего не записывает: на «Операциях» появится
+        блок «Регулярные» с кнопкой «Внести». Месяц целиком не копируется — вместе с суммами переезжали
+        бы и прошлые ошибки.
+      </p>
+
+      <ul className="plain">
+        {live.map((each) => (
+          <li key={each.id} className="line">
+            <div className="line__main">
+              <b>{each.name}</b>{' '}
+              <span className="muted">
+                · {formatMoney(each.expected, findCurrency(data.currencies, each.expected.currency))} ·{' '}
+                {each.every.months === 1
+                  ? 'каждый месяц'
+                  : `раз в ${each.every.months} ${plural(each.every.months, ['месяц', 'месяца', 'месяцев'])}`}
+              </span>
+              <div className="basis">
+                {data.categories.find((one) => one.id === each.categoryId)?.name ?? 'категория удалена'} · с{' '}
+                {each.from}
+                {each.to && ` по ${each.to}`}
+              </div>
+            </div>
+            <div className="row row--wrap">
+              <button type="button" onClick={() => setEditing(each)}>
+                Изменить
+              </button>
+              <button type="button" onClick={() => void db.remove('recurring', each.id)}>
+                Убрать
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {(adding || editing) && (
+        <RecurringForm
+          key={editing?.id ?? 'new'}
+          data={data}
+          record={editing}
+          onSave={save}
+          onCancel={() => {
+            setEditing(null)
+            setAdding(false)
+          }}
+        />
+      )}
+
+      {!adding && !editing && (
+        <div className="row">
+          <button type="button" onClick={() => setAdding(true)}>
+            Завести регулярную
+          </button>
+        </div>
+      )}
+    </Fold>
+  )
+}
+
+function RecurringForm({
+  data,
+  record,
+  onSave,
+  onCancel,
+}: {
+  data: LedgerData
+  record: Recurring | null
+  onSave: (draft: RecurringDraft) => Promise<void>
+  onCancel: () => void
+}) {
+  const accounts = active(data.accounts)
+  const categories = active(data.categories)
+  const [name, setName] = useState(record?.name ?? '')
+  const [categoryId, setCategoryId] = useState(record?.categoryId ?? categories[0]?.id ?? '')
+  const [accountId, setAccountId] = useState(record?.accountId ?? accounts[0]?.id ?? '')
+  const [amount, setAmount] = useState(() => {
+    if (!record) return ''
+    const currency = findCurrency(data.currencies, record.expected.currency)
+    return currency ? String(record.expected.amount / 10 ** currency.decimals) : ''
+  })
+  const [everyMonths, setEveryMonths] = useState(record?.every.months ?? 1)
+  const [from, setFrom] = useState(record?.from ?? monthOf(today()))
+  const [to, setTo] = useState(record?.to ?? '')
+  const [error, setError] = useState('')
+
+  function submit() {
+    const account = accounts.find((each) => each.id === accountId)
+    if (!account) return setError('не выбран счёт')
+    const currency = findCurrency(data.currencies, account.currency)
+    if (!currency) return setError(`валюты ${account.currency} нет в справочнике`)
+
+    const parsed = parseAmount(amount, currency.decimals)
+    if (!parsed) return setError('ожидаемая сумма — положительное число')
+
+    const draft: RecurringDraft = {
+      name,
+      categoryId,
+      accountId,
+      expected: { amount: parsed.amount, currency: account.currency },
+      everyMonths,
+      from,
+    }
+    if (to) draft.to = to
+
+    const problem = recurringProblem(
+      { recurring: data.recurring, categories: data.categories, accounts: data.accounts, entries: [] },
+      draft,
+      record?.id,
+    )
+    if (problem) return setError(problem)
+
+    setError('')
+    void onSave(draft)
+  }
+
+  return (
+    <div className="form">
+      <label className="field">
+        Название
+        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Связь" autoFocus />
+      </label>
+
+      <label className="field">
+        Категория — она же говорит, расход это или доход
+        <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+          {categories.map((each) => (
+            <option key={each.id} value={each.id}>
+              {each.name} · {each.side === 'income' ? 'доход' : 'расход'}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="field">
+        Счёт
+        <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+          {accounts.map((each) => (
+            <option key={each.id} value={each.id}>
+              {each.name} · {each.currency}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="field">
+        Сколько ждём
+        <input
+          value={amount}
+          onChange={(event) => setAmount(event.target.value)}
+          placeholder="1234,56"
+          inputMode="decimal"
+        />
+      </label>
+
+      <div className="row row--wrap">
+        <label className="field">
+          Раз в сколько месяцев
+          <input
+            type="number"
+            value={everyMonths}
+            onChange={(event) => setEveryMonths(Number(event.target.value))}
+            min={1}
+          />
+        </label>
+        <label className="field">
+          С какого месяца
+          <input value={from} onChange={(event) => setFrom(event.target.value)} placeholder="2026-09" />
+        </label>
+        <label className="field">
+          По какой — если кончается
+          <input value={to} onChange={(event) => setTo(event.target.value)} placeholder="2027-06" />
+        </label>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      <div className="form__actions">
+        <button type="button" onClick={onCancel}>
+          Отмена
+        </button>
+        <button type="button" className="btn--primary" onClick={submit}>
+          {record ? 'Сохранить' : 'Завести'}
+        </button>
+      </div>
+    </div>
   )
 }
 

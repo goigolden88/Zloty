@@ -17,15 +17,16 @@
 
 import { useEffect, useState } from 'react'
 import { db } from '../../app/core.ts'
-import type { Account, Category, Currency, Profile } from '../../app/model.ts'
+import type { Account, Category, Currency, Profile, Recurring } from '../../app/model.ts'
 
-const STORES = ['profile', 'currencies', 'accounts', 'categories'] as const
+const STORES = ['profile', 'currencies', 'accounts', 'categories', 'recurring'] as const
 
 export type LedgerData = {
   profile: Profile[]
   currencies: Currency[]
   accounts: Account[]
   categories: Category[]
+  recurring: Recurring[]
 }
 
 export type Ledger = {
@@ -34,7 +35,7 @@ export type Ledger = {
   data: LedgerData
 }
 
-const EMPTY: LedgerData = { profile: [], currencies: [], accounts: [], categories: [] }
+const EMPTY: LedgerData = { profile: [], currencies: [], accounts: [], categories: [], recurring: [] }
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : 'Неизвестная ошибка'
@@ -42,13 +43,14 @@ function describe(error: unknown): string {
 
 async function readAll(): Promise<LedgerData> {
   await db.ready()
-  const [profile, currencies, accounts, categories] = await Promise.all([
+  const [profile, currencies, accounts, categories, recurring] = await Promise.all([
     db.getAll('profile', { includeDeleted: true }),
     db.getAll('currencies', { includeDeleted: true }),
     db.getAll('accounts', { includeDeleted: true }),
     db.getAll('categories', { includeDeleted: true }),
+    db.getAll('recurring', { includeDeleted: true }),
   ])
-  return { profile, currencies, accounts, categories }
+  return { profile, currencies, accounts, categories, recurring }
 }
 
 /**

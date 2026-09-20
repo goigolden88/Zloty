@@ -311,6 +311,24 @@ async function scenario(profile) {
   const saved = await screen()
   check('настройки учёта сохранились', has(saved, 'Сохранено'), line(saved, 'Сохранено'))
 
+  // Регулярная (Р-06): шаблон, который сам ничего не пишет.
+  await act(`startsWith('.fold__btn', 'Регулярные').click();`)
+  await sleep(400)
+  await act(`byText('button', 'Завести регулярную').click();`)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('input[placeholder="Связь"]'), 'Связь');
+    set(document.querySelector('input[placeholder="1234,56"]'), '600');
+    byText('button', 'Завести').click();
+  `)
+  await sleep(700)
+  const withRecurring = await screen()
+  check(
+    'регулярная завелась',
+    has(withRecurring, 'каждый месяц'),
+    line(withRecurring, 'Связь'),
+  )
+
   // Записанное обязано пережить перезагрузку: это IndexedDB, а не состояние
   // экрана. Проверка ловит и то, что запись вообще дошла до базы.
   await send('Page.navigate', { url: APP })
@@ -340,6 +358,30 @@ async function scenario(profile) {
   await go('/entries')
   const entries = await screen()
   check('экран «Операции» открылся', has(entries, 'Операции'), line(entries, 'Операции'))
+
+  check(
+    'блок «Регулярные» говорит, чего не хватает',
+    has(entries, 'не внесено 1 из 1'),
+    line(entries, 'не внесено'),
+  )
+
+  // «Внести» тапом: шаблон сам ничего не пишет, запись появляется по кнопке.
+  await act(`
+    const row = [...document.querySelectorAll('li')].find((el) => el.textContent.includes('Связь'));
+    row.querySelector('button').click();
+  `)
+  await sleep(800)
+  const afterRecurring = await screen()
+  check(
+    '«Внести» закрывает регулярную',
+    has(afterRecurring, 'все внесены'),
+    line(afterRecurring, 'все внесены'),
+  )
+  check(
+    'и запись действительно появилась',
+    has(afterRecurring, '600,00'),
+    line(afterRecurring, '600,00'),
+  )
 
   await act(`byText('button', 'Внести').click();`)
   await sleep(500)

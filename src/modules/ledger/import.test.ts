@@ -32,7 +32,7 @@ const CASH: Account = { id: 'acc-2', updatedAt: AT, name: 'Наличные', cu
 const FOOD: Category = { id: 'cat-1', updatedAt: AT, name: 'Продукты', side: 'expense', order: 0 }
 
 function base(over: Partial<LedgerImportData> = {}): LedgerImportData {
-  return { currencies: [RUB], accounts: [BANK, CASH], categories: [FOOD], entries: [], rates: [], ...over }
+  return { currencies: [RUB], accounts: [BANK, CASH], categories: [FOOD], recurring: [], entries: [], rates: [], ...over }
 }
 
 describe('валюты', () => {
