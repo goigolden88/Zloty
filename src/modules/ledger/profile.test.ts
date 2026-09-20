@@ -6,6 +6,7 @@ import {
   MAX_PERIOD_START_DAY,
   periodStartDay,
   profileProblem,
+  profileWrites,
   readProfile,
   saveProfile,
 } from './profile.ts'
@@ -38,6 +39,34 @@ describe('одна запись настроек', () => {
   it('правка не заводит вторую запись', () => {
     const was = profile({ id: 'a', updatedAt: '2026-09-01T00:00:00.000Z' })
     expect(saveProfile(was, { baseCurrency: 'USD' }).id).toBe('a')
+  })
+})
+
+describe('лишние записи настроек уходят надгробиями', () => {
+  it('одна запись — писать только её', () => {
+    const was = profile({ id: 'a', updatedAt: '2026-09-01T00:00:00.000Z' })
+    const { records } = profileWrites([was], was, { baseCurrency: 'USD' })
+    expect(records).toHaveLength(1)
+    expect(records[0]?.deleted).toBeUndefined()
+  })
+
+  it('две записи с двух устройств — вторая уходит надгробием', () => {
+    const mine = profile({ id: 'a', updatedAt: '2026-09-01T00:00:00.000Z' })
+    const theirs = profile({ id: 'b', updatedAt: '2026-09-02T00:00:00.000Z', baseCurrency: 'USD' })
+    const { saved, records } = profileWrites([mine, theirs], mine, { baseCurrency: 'RUB' })
+    expect(saved.id).toBe('a')
+    expect(records).toHaveLength(2)
+    expect(records[1]).toMatchObject({ id: 'b', deleted: true })
+  })
+
+  it('надгробие второй раз не ставится', () => {
+    const mine = profile({ id: 'a', updatedAt: '2026-09-01T00:00:00.000Z' })
+    const gone = profile({ id: 'b', updatedAt: '2026-09-02T00:00:00.000Z', deleted: true })
+    expect(profileWrites([mine, gone], mine, { baseCurrency: 'RUB' }).records).toHaveLength(1)
+  })
+
+  it('первой записи ещё нет — пишется только она', () => {
+    expect(profileWrites([], null, { baseCurrency: 'RUB' }).records).toHaveLength(1)
   })
 })
 

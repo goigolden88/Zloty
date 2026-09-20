@@ -96,6 +96,24 @@ export function saveProfile(current: Profile | null, draft: ProfileDraft): Profi
   return profile
 }
 
+/**
+ * Что записать при сохранении настроек: сама запись и надгробия лишним.
+ *
+ * Единственность записи держит код, а не тип (Р-12, п. 9). Синхронизация
+ * умеет слить правки одной записи, но не выбрать между двумя разными:
+ * настройки, заведённые на двух устройствах до первого обмена, спорили бы
+ * вечно. Здесь лишние уходят надгробиями, и побеждает сохранённая сейчас.
+ */
+export function profileWrites(
+  list: readonly Profile[],
+  current: Profile | null,
+  draft: ProfileDraft,
+): { saved: Profile; records: Profile[] } {
+  const saved = saveProfile(current, draft)
+  const others = list.filter((each) => !each.deleted && each.id !== saved.id)
+  return { saved, records: [saved, ...others.map((each) => ({ ...each, deleted: true }))] }
+}
+
 /** С какого числа считается месяц. Настройки нет — календарный. */
 export function periodStartDay(profile: Profile | null): number {
   return profile?.periodStartDay ?? DEFAULT_PERIOD_START_DAY

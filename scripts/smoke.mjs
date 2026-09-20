@@ -602,6 +602,32 @@ async function scenario(profile) {
   await go('/settings')
   const settings = await screen()
   check('в настройках есть синхронизация', has(settings, 'Синхронизация'), line(settings, 'Синхронизация'))
+  // Перед первой настройкой важно, что поля вообще есть: без них человек
+  // не поймёт, чего от него хотят.
+  await act(`startsWith('.fold__btn', 'Синхронизация').click();`)
+  await sleep(500)
+  await act(`
+    const box = [...document.querySelectorAll('input[type="checkbox"]')].find((each) =>
+      each.closest('label').textContent.includes('приватный репозиторий'));
+    box.click();
+  `)
+  await sleep(600)
+  const sync = await run(`
+    Boolean(
+      document.querySelector('input[placeholder="владелец/репозиторий"]') &&
+      document.querySelector('input[placeholder="github_pat_…"]')
+    )
+  `)
+  check('включённая синхронизация просит репозиторий и токен', sync === true, 'владелец/репозиторий и github_pat_…')
+
+  // Выключаем обратно: дальше прогон уходит в офлайн, и попытки ходить
+  // в сеть сделали бы его шумным.
+  await act(`
+    const box = [...document.querySelectorAll('input[type="checkbox"]')].find((each) =>
+      each.closest('label').textContent.includes('приватный репозиторий'));
+    box.click();
+  `)
+  await sleep(500)
   check('в настройках есть копия данных', has(settings, 'Копия данных'), line(settings, 'Копия данных'))
 
   await act(`startsWith('.fold__btn', 'Напоминания').click();`)

@@ -23,10 +23,10 @@ import {
 } from '../modules/ledger/ledger.ts'
 import {
   DEFAULT_PERIOD_START_DAY,
+  profileWrites,
   MAX_PERIOD_START_DAY,
   profileProblem,
   readProfile,
-  saveProfile,
   type ProfileDraft,
 } from '../modules/ledger/profile.ts'
 import {
@@ -767,8 +767,14 @@ function LedgerSettings({ data }: { data: LedgerData }) {
     if (problem) return setError(problem)
 
     setError('')
-    await db.put('profile', saveProfile(current, draft))
-    setNote('Сохранено')
+
+    // Настройки — одна запись (Р-12, п. 9), и лишние уходят надгробиями:
+    // правило и его довод — в `profileWrites`.
+    const { records } = profileWrites(data.profile, current, draft)
+    await db.putMany('profile', records)
+
+    const extra = records.length - 1
+    setNote(extra === 0 ? 'Сохранено' : `Сохранено. Лишних записей настроек убрано: ${extra}`)
   }
 
   return (
