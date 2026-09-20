@@ -306,6 +306,84 @@ describe('итог заменяется операциями (Р-02)', () => {
   })
 })
 
+describe('файл переноса ложится в пустую базу', () => {
+  /** Пустая база: ни валют, ни счетов, ни категорий. */
+  function nothing(): LedgerImportData {
+    return { currencies: [], accounts: [], categories: [], recurring: [], entries: [], rates: [] }
+  }
+
+  /**
+   * Форма файла, который собирает `scripts/check-history.mjs`. Данные
+   * выдуманы: настоящие лежат в seed/ и в тесты не попадают.
+   *
+   * Разделы разбираются по порядку, и каждый видит заведённое предыдущими —
+   * ровно так их зовёт `registry.ts`.
+   */
+  function loadAll(file: {
+    currencies?: unknown
+    accounts?: unknown
+    entries?: unknown
+  }): { data: LedgerImportData; issues: string[] } {
+    let data = nothing()
+    const issues: string[] = []
+
+    const currencies = importCurrencies(file.currencies ?? [], data, context())
+    issues.push(...currencies.issues.map((each) => each.reason))
+    data = { ...data, currencies: currencies.writes.currencies ?? [] }
+
+    const accounts = importAccounts(file.accounts ?? [], data, context())
+    issues.push(...accounts.issues.map((each) => each.reason))
+    data = { ...data, accounts: accounts.writes.accounts ?? [] }
+
+    const entries = importEntries(file.entries ?? [], data, context())
+    issues.push(...entries.issues.map((each) => each.reason))
+    data = {
+      ...data,
+      categories: entries.writes.categories ?? [],
+      entries: entries.writes.entries ?? [],
+    }
+
+    return { data, issues }
+  }
+
+  const FILE = {
+    currencies: [{ code: 'RUB', name: 'Рубль', decimals: 2 }],
+    accounts: [{ name: 'Таблица (история)', currency: 'RUB', kind: 'savings', ledgerOnly: true }],
+    entries: [
+      { kind: 'expense', account: 'Таблица (история)', amount: 1000, periodFrom: '2026-01-05', periodTo: '2026-02-14' },
+      {
+        kind: 'expense',
+        account: 'Таблица (история)',
+        amount: 300,
+        periodFrom: '2026-01-05',
+        periodTo: '2026-02-14',
+        special: true,
+      },
+    ],
+  }
+
+  it('самодостаточный файл проходит целиком, без единой жалобы', () => {
+    const { data, issues } = loadAll(FILE)
+    expect(issues).toEqual([])
+    expect(data.currencies.map((each) => each.code)).toEqual(['RUB'])
+    expect(data.accounts[0]?.ledgerOnly).toBe(true)
+    expect(data.entries).toHaveLength(2)
+    expect(data.entries.filter((each) => each.special)).toHaveLength(1)
+  })
+
+  it('без раздела валют не проходит ничего — и это названо', () => {
+    const { data, issues } = loadAll({ ...FILE, currencies: [] })
+    expect(data.entries).toHaveLength(0)
+    expect(issues.some((each) => each.includes('нет в справочнике'))).toBe(true)
+  })
+
+  it('без раздела счетов записи не ложатся — счёт наугад не заводится (Р-13)', () => {
+    const { data, issues } = loadAll({ ...FILE, accounts: [] })
+    expect(data.entries).toHaveLength(0)
+    expect(issues.some((each) => each.includes('заведите его или добавьте в раздел'))).toBe(true)
+  })
+})
+
 describe('промпт знает справочники и загруженное (Р-12, пп. 5, 8)', () => {
   const loaded: Entry[] = [
     { id: 'a', updatedAt: AT, kind: 'expense', accountId: BANK.id, money: { amount: 100, currency: 'RUB' }, date: '2026-09-14', categoryId: FOOD.id, bankText: 'МАГАЗИН У ДОМА' },

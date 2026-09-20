@@ -150,10 +150,33 @@ if (failed.length === 0) {
   const file = {
     format: FORMAT,
     version: 1,
+    // Файл обязан быть самодостаточным: он заводит и валюту, и счёт.
+    // Счёт ссылается на валюту, а импорт не выдумывает её наугад (Р-13) —
+    // без этого раздела перенос в пустую базу не проходит вовсе.
+    currencies: [
+      {
+        code: source.currency,
+        name: source.currencyName ?? source.currency,
+        decimals: source.currencyDecimals ?? 2,
+      },
+    ],
     // Счёт истории заводится тем же файлом: выписки на него не грузятся
     // никогда, иначе итоги таблицы столкнутся с выписками тех же месяцев.
     accounts: [{ name: source.account, currency: source.currency, kind: 'savings', ledgerOnly: true }],
     entries: periods.flatMap(entriesOf),
+  }
+
+  // Самодостаточность — проверка, а не намерение: файл, который ссылается
+  // на то, чего сам не объявил, лёг бы только в ту базу, где это уже есть.
+  const declaredCurrencies = new Set(file.currencies.map((each) => each.code))
+  const declaredAccounts = new Set(file.accounts.map((each) => each.name))
+  if (!file.accounts.every((each) => declaredCurrencies.has(each.currency))) {
+    console.log('НЕТ  счёт ссылается на валюту, которой файл не объявляет')
+    process.exit(1)
+  }
+  if (!file.entries.every((each) => declaredAccounts.has(each.account))) {
+    console.log('НЕТ  запись ссылается на счёт, которого файл не объявляет')
+    process.exit(1)
   }
   writeFileSync(TARGET, `${JSON.stringify(file, null, 2)}\n`, 'utf8')
 
