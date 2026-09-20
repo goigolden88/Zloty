@@ -15,6 +15,7 @@ import {
   USUAL_MONTHS,
   type Missing,
   type MonthData,
+  type MonthReport,
   type Sum,
 } from '../modules/ledger/month.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
@@ -153,14 +154,21 @@ function Report({
       {/* Главный ответ — первым. Всё остальное объясняет его. */}
       <div className="block">
         <h2>Отложено</h2>
-        {report.saved === null ? (
+        {report.savedProblem === 'covered' ? (
+          <p className="error">
+            Расход за этот месяц записан итогом за период, а не по дням. Сколько отложено именно в этом
+            месяце, посчитать нельзя: помесячно расход неизвестен. Числа периода — ниже.
+          </p>
+        ) : report.savedProblem === 'no-income' ? (
           <p className="error">
             Доход за этот месяц не внесён — считать не из чего. Это не ноль: ноль значил бы, что вы ничего
             не заработали.
           </p>
         ) : (
           <>
-            <p className="big">{show(report.saved)}</p>
+            {/* Сюда попадаем только когда `savedProblem` пуст, а значит
+                отложенное посчитано: причина его отсутствия разобрана выше. */}
+            <p className="big">{show(report.saved ?? 0)}</p>
             <p className="basis">
               {report.savingsRate === null
                 ? 'доход нулевой, доля не считается'
@@ -170,7 +178,7 @@ function Report({
               <p className="basis">
                 {report.savingsRate >= goal
                   ? `цель — ${percent(goal)}, и в этом месяце она взята`
-                  : `цель — ${percent(goal)}: до неё не хватает ${show(Math.round(report.income.amount * goal) - report.saved)}`}
+                  : `цель — ${percent(goal)}: до неё не хватает ${show(Math.round(report.income.amount * goal) - (report.saved ?? 0))}`}
               </p>
             )}
           </>
@@ -191,18 +199,20 @@ function Report({
               Расход обычный
               <div className="basis">без особых трат</div>
             </div>
-            <div>{show(report.usualExpense.amount)}</div>
+            <div>{spent(report, report.usualExpense.amount, show)}</div>
           </li>
           <li className="line">
             <div className="line__main">
               Расход особый
               <div className="basis">в обычный месяц не идёт</div>
             </div>
-            <div>{show(report.specialExpense.amount)}</div>
+            <div>{spent(report, report.specialExpense.amount, show)}</div>
           </li>
         </ul>
         <p className="basis">
-          {basis(report.expense, 'расход')}
+          {report.expense.entries === 0 && report.savedProblem === 'covered'
+            ? 'расход этого месяца записан периодом, а не операциями'
+            : basis(report.expense, 'расход')}
           {report.transfers > 0 &&
             `; переводов между своими счетами — ${report.transfers}, они не расход и не доход`}
         </p>
@@ -277,6 +287,18 @@ function Report({
 }
 
 // ─── Основания ─────────────────────────────────────────────────────────────
+
+/**
+ * Расход строкой. Своих операций нет, а месяц покрыт периодом — ноль здесь
+ * читался бы как «не тратил», хотя правда в том, что расход записан иначе
+ * (Р-07: число без основания хуже, чем его отсутствие).
+ */
+function spent(report: MonthReport, amount: number, show: (amount: number) => string) {
+  if (report.expense.entries === 0 && report.savedProblem === 'covered') {
+    return <span className="muted">записан периодом</span>
+  }
+  return show(amount)
+}
 
 /** «по 142 операциям» — число вместе с тем, по чему оно посчитано (Р-07). */
 function basis(sum: Sum, what: string): string {

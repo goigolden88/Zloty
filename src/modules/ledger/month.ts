@@ -134,8 +134,10 @@ export type MonthReport = {
   usualExpense: Sum
   /** Особые траты: в расход месяца входят, в обычный месяц — нет. */
   specialExpense: Sum
-  /** Доход − расход. Дохода нет — null: вычитать не из чего. */
+  /** Доход − расход. Считать нельзя — null, и `savedProblem` говорит почему. */
   saved: number | null
+  /** Почему отложенное не посчитано. Null — посчитано. */
+  savedProblem: SavedProblem
   /** Отложено / доход. Дохода нет или он нулевой — null. */
   savingsRate: number | null
   /** Переводы месяца: не расход и не доход, но их видно числом. */
@@ -143,6 +145,17 @@ export type MonthReport = {
   /** Итоги периодов, задевающие месяц: месяц называет их, а не считает. */
   periodTotals: Entry[]
 }
+
+/**
+ * Почему отложенное не посчитано.
+ *
+ * — `no-income` — доход за месяц не внесён: вычитать не из чего;
+ * — `covered` — расход месяца записан итогом за период, а не операциями.
+ *   Помесячно он неизвестен, и вычесть его из дохода нельзя (Р-12, п. 6).
+ *   Без этого «отложено» показало бы весь доход как отложенный — число
+ *   уверенное и неверное.
+ */
+export type SavedProblem = 'no-income' | 'covered' | null
 
 export function monthReport(data: MonthData, month: string): MonthReport {
   const operations = operationsOf(data.entries, month)
@@ -153,9 +166,16 @@ export function monthReport(data: MonthData, month: string): MonthReport {
   const usualExpense = sumOf(expenses.filter((each) => !each.special), data)
   const specialExpense = sumOf(expenses.filter((each) => each.special === true), data)
 
-  // Доход не внесён — отложенного не существует. Ноль здесь означал бы
+  const periodTotals = totalsTouching(data.entries, month)
+
+  // Расход месяца записан периодом — помесячно он неизвестен, и вычитать
+  // его из дохода нельзя. Иначе отложенным окажется весь доход.
+  // Доход не внесён — отложенного тоже не существует: ноль здесь означал бы
   // «ничего не отложено», а правда в том, что считать не из чего (Р-07).
-  const saved = income.entries === 0 ? null : income.amount - expense.amount
+  const covered = periodTotals.some((each) => each.kind === 'expense')
+  const savedProblem: SavedProblem = covered ? 'covered' : income.entries === 0 ? 'no-income' : null
+
+  const saved = savedProblem === null ? income.amount - expense.amount : null
   const savingsRate = saved === null || income.amount === 0 ? null : saved / income.amount
 
   return {
@@ -165,9 +185,10 @@ export function monthReport(data: MonthData, month: string): MonthReport {
     usualExpense,
     specialExpense,
     saved,
+    savedProblem,
     savingsRate,
     transfers: operations.filter((each) => each.kind === 'transfer').length,
-    periodTotals: totalsTouching(data.entries, month),
+    periodTotals,
   }
 }
 

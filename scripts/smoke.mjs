@@ -585,6 +585,24 @@ async function scenario(profile) {
     line(month, 'прежней таблицы'),
   )
 
+  // Месяц, расход которого записан периодом: ноль тут читался бы как
+  // «не тратил», хотя правда — «записан иначе» (Р-07).
+  await act(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '←').click();`)
+  await sleep(500)
+  await act(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '←').click();`)
+  await sleep(700)
+  const july = await screen()
+  check(
+    'месяц, покрытый периодом, не показывает расход нулём',
+    has(july, 'записан периодом'),
+    line(july, 'записан периодом'),
+  )
+  check(
+    'и отложенное по нему не считается — сказано почему',
+    has(july, 'посчитать нельзя'),
+    line(july, 'посчитать нельзя'),
+  )
+
   // ── Правка загруженной операции: ключ импорта обязан её пережить,
   //    иначе следующая выписка принесёт дубль (Р-12, «Цена», п. 2).
   await go('/entries')

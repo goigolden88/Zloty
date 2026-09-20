@@ -104,6 +104,38 @@ describe('итог периода по месяцам не дробится (Р-
     expect(report.periodTotals.map((each) => each.period?.to)).toEqual(['2026-09-25'])
     expect(monthReport(data(covered), '2026-08').periodTotals).toHaveLength(1)
   })
+
+  it('отложенное по такому месяцу не считается — и сказано почему', () => {
+    const withIncome = [...covered, entry({ kind: 'income', amount: 20000000, date: '2026-09-05' })]
+    const report = monthReport(data(withIncome), '2026-09')
+    expect(report.saved).toBeNull()
+    expect(report.savedProblem).toBe('covered')
+    expect(report.savingsRate).toBeNull()
+  })
+
+  it('иначе отложенным оказался бы весь доход — число уверенное и неверное', () => {
+    // Тот же доход в месяце без итогов периода считается как обычно.
+    const clean = [entry({ kind: 'income', amount: 20000000, date: '2026-09-05' })]
+    const report = monthReport(data(clean), '2026-09')
+    expect(report.saved).toBe(20000000)
+    expect(report.savedProblem).toBeNull()
+  })
+
+  it('причина различается: нет дохода — это не то же, что расход записан периодом', () => {
+    const noIncome = [entry({ kind: 'expense', amount: 100000, date: '2026-09-10' })]
+    expect(monthReport(data(noIncome), '2026-09').savedProblem).toBe('no-income')
+  })
+
+  it('итог периода по доходу расход месяца не прячет', () => {
+    const incomeTotal = [
+      entry({ kind: 'income', amount: 500000, period: { from: '2026-08-20', to: '2026-09-25' } }),
+      entry({ kind: 'income', amount: 20000000, date: '2026-09-05' }),
+      entry({ kind: 'expense', amount: 100000, date: '2026-09-10' }),
+    ]
+    const report = monthReport(data(incomeTotal), '2026-09')
+    expect(report.savedProblem).toBeNull()
+    expect(report.saved).toBe(19900000)
+  })
 })
 
 describe('позиция без курса называется, а не пропадает (Р-04)', () => {
