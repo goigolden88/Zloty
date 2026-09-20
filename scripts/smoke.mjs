@@ -319,6 +319,52 @@ async function scenario(profile) {
   const again = await screen()
   check('справочники пережили перезагрузку', has(again, 'Синий банк') && has(again, 'RUB'), line(again, 'Синий банк'))
 
+  // ── Операции: ввод руками и правило «либо итог, либо операции» (Р-02).
+  //    Второе проверяется отказом: правило, которое некому нарушить,
+  //    прогоном не проверено.
+  await go('/entries')
+  const entries = await screen()
+  check('экран «Операции» открылся', has(entries, 'Операции'), line(entries, 'Операции'))
+
+  await act(`byText('button', 'Внести').click();`)
+  await sleep(500)
+  await act(`
+    const amount = document.querySelector('input[placeholder="1234,56"]');
+    set(amount, '500');
+    const category = [...document.querySelectorAll('select')].find((each) =>
+      [...each.options].some((option) => option.textContent.trim() === 'Еда'));
+    set(category, [...category.options].find((option) => option.textContent.trim() === 'Еда').value);
+    category.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать').click();`)
+  await sleep(700)
+  const withEntry = await screen()
+  check('расход внесён руками', has(withEntry, '500,00'), line(withEntry, '500,00'))
+  check('вид записи назван словом, а не знаком', has(withEntry, 'расход'), line(withEntry, '500,00'))
+
+  await act(`byText('button', 'Внести').click();`)
+  await sleep(500)
+  await act(`
+    const kind = document.querySelectorAll('select')[0];
+    set(kind, 'period');
+    kind.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('input[placeholder="1234,56"]'), '9000');
+    byText('button', 'Записать').click();
+  `)
+  await sleep(700)
+  const clash = await screen()
+  check(
+    'итог не ложится на счёт, где уже есть операции',
+    has(clash, 'уже есть операции'),
+    line(clash, 'уже есть операции'),
+  )
+  await act(`byText('button', 'Отмена').click();`)
+  await sleep(400)
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()

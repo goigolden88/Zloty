@@ -5,6 +5,7 @@ import { db, sync } from './app/core.ts'
 import { CoreProvider } from './shared/ui/core.tsx'
 import { Layout, type Tab } from './shared/ui/Layout.tsx'
 import { Books } from './screens/Books.tsx'
+import { Entries } from './screens/Entries.tsx'
 import { Help } from './screens/Help.tsx'
 import { Month } from './screens/Month.tsx'
 import { Settings } from './screens/Settings.tsx'
@@ -22,9 +23,10 @@ import { Settings } from './screens/Settings.tsx'
  * пропсом: их названия у приложения свои.
  */
 const TABS: readonly Tab[] = [
-  // Вкладка пока одна: «Операции» и «Счета» прибавятся вместе с экранами
-  // ввода в Этапе 1. Пустых вкладок-заглушек не заводим.
+  // Внизу — то, что открывают каждый день. «Счета и категории» туда не идут:
+  // их заводят один раз, и они живут ссылкой из шапки.
   { to: '/', name: 'Месяц', end: true },
+  { to: '/entries', name: 'Операции', end: false },
 ]
 
 export function App() {
@@ -38,6 +40,7 @@ export function App() {
             <Route index element={<Month />} />
             {/* Справочники учёта: заводят один раз, правят редко — потому
                 ссылкой из шапки «Месяца», а не вкладкой. */}
+            <Route path="entries" element={<Entries />} />
             <Route path="books" element={<Books />} />
             <Route path="settings" element={<Settings />} />
             {/* Справка: вход — «?» в шапке «Месяца». */}
