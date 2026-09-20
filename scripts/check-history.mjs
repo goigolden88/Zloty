@@ -12,7 +12,11 @@
  * 2. **«Сумма» против итогового листа** («Расходы за ласт месяц»). Ловит
  *    случай, когда со снимка переписана целая строка не оттуда;
  * 3. **Периоды идут подряд, без разрывов и без нахлёстов.** Ловит
- *    пропущенную строку — её иначе не заметить: суммы-то сойдутся.
+ *    пропущенную строку — её иначе не заметить: суммы-то сойдутся;
+ * 4. **Расход в день не выбивается из остальных в разы.** Ловит сдвинутую
+ *    границу периода и лишнюю цифру в сумме — то, что сходится по всем
+ *    трём проверкам выше и всё равно неправда. Период в один день
+ *    с месячной суммой приведётся к 30,44 дня и утопит «обычный месяц».
  *
  * Данные — только в `seed/`, под `.gitignore`: в таблице видно, сколько
  * человек получает и на что тратит (CLAUDE.md, «Личные данные»). Здесь —
@@ -39,6 +43,29 @@ const checks = []
 
 function check(what, passed, seen = '') {
   checks.push({ what, passed, seen })
+}
+
+/**
+ * Во сколько раз расход в день может отличаться от обычного, прежде чем
+ * это перестанет быть похоже на правду. На настоящих данных разброс
+ * между самым скромным и самым щедрым периодом — втрое-вчетверо;
+ * сдвинутая на месяц граница даёт десятки раз.
+ */
+const SUSPICIOUS_TIMES = 8
+
+/** Дней в периоде, границы включительно: «5 января — 5 января» — это один день. */
+function daysOf(period) {
+  const from = new Date(`${period.from}T00:00:00Z`).getTime()
+  const to = new Date(`${period.to}T00:00:00Z`).getTime()
+  return Math.round((to - from) / 86400000) + 1
+}
+
+/** Середина ряда. Среднее сюда не годится: его утащил бы сам выброс. */
+function median(numbers) {
+  const sorted = [...numbers].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  if (sorted.length === 0) return 0
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
 }
 
 /** Следующий день после даты — для проверки, что периоды идут подряд. */
@@ -97,6 +124,24 @@ for (const [at, period] of periods.entries()) {
     `${period.from}: начинается сразу за прошлым периодом`,
     period.from === expected,
     period.from === expected ? '' : `прошлый кончился ${previous.to}, ждали ${expected}`,
+  )
+}
+
+// ─── 4. Расход в день похож на правду ──────────────────────────────────────
+
+const perDay = periods.map((period) => ({ period, value: period.total / daysOf(period) }))
+const usual = median(perDay.map((each) => each.value))
+
+for (const { period, value } of perDay) {
+  const times = usual > 0 ? value / usual : 1
+  const sane = times <= SUSPICIOUS_TIMES && times >= 1 / SUSPICIOUS_TIMES
+  check(
+    `${period.from} — ${period.to}: расход в день похож на правду`,
+    sane,
+    sane
+      ? `${Math.round(value)} в день за ${daysOf(period)} дн.`
+      : `${Math.round(value)} в день за ${daysOf(period)} дн. — это в ${Math.round(times)} раз ` +
+        `отличается от обычного (${Math.round(usual)}). Проверьте границы периода и сумму`,
   )
 }
 

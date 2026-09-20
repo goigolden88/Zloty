@@ -409,9 +409,23 @@ describe('промпт знает справочники и загруженно
     expect(notes).toContain('Расходные категории: Продукты.')
   })
 
-  it('счёт истории в промпт не идёт: выписки на него не грузятся', () => {
+  it('счёт истории не идёт в список для выписок', () => {
     const ledgerOnly: Account = { ...BANK, id: 'acc-3', name: 'Таблица', ledgerOnly: true }
     const notes = ledgerPromptNotes(base({ accounts: [BANK, ledgerOnly] }), new Map())
-    expect(notes).not.toContain('Таблица')
+    const forStatements = notes.slice(0, notes.indexOf('Счёт истории'))
+    expect(forStatements).not.toContain('Таблица')
+  })
+
+  it('но назван отдельно: переносят на него беседой, и класть итоги некуда без него', () => {
+    const ledgerOnly: Account = { ...BANK, id: 'acc-3', name: 'Таблица', ledgerOnly: true }
+    const notes = ledgerPromptNotes(base({ accounts: [BANK, ledgerOnly] }), new Map())
+    expect(notes).toContain('Счёт истории')
+    expect(notes).toContain('«Таблица» (RUB)')
+    expect(notes).toContain('periodFrom')
+    expect(notes).toContain('"special": true')
+  })
+
+  it('счёта истории нет — и строки о нём нет', () => {
+    expect(ledgerPromptNotes(base({ accounts: [BANK] }), new Map())).not.toContain('Счёт истории')
   })
 })

@@ -508,10 +508,19 @@ async function scenario(profile) {
   await sleep(900)
   const history = await screen()
   check('история загрузилась', has(history, 'Загружено записей'), line(history, 'Загружено записей'))
+  // Именно в списке «С какого дня брать выписку», а не где угодно на экране:
+  // в промпте счёт истории назван законно и отдельно — на него переносят
+  // прежнюю таблицу.
+  const forStatements = await run(`
+    (() => {
+      const head = [...document.querySelectorAll('h3')].find((el) => el.textContent.includes('С какого дня'));
+      return head?.nextElementSibling?.innerText ?? '';
+    })()
+  `)
   check(
-    'счёт истории в список выписок не попал',
-    !has(history, 'Старая таблица'),
-    'выписки на счёт истории не грузятся никогда',
+    'счёт истории не попал в список, с какого дня брать выписку',
+    typeof forStatements === 'string' && forStatements.length > 0 && !has(forStatements, 'Старая таблица'),
+    forStatements.replace(/\s+/g, ' ').slice(0, 70),
   )
 
   await go('/books')

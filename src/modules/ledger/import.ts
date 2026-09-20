@@ -684,6 +684,21 @@ export function ledgerPromptNotes(data: LedgerImportData, lastDays: Map<string, 
     }
   }
 
+  // Счёт истории из списка выше исключён намеренно: выписки на него
+  // не ложатся никогда (Р-12, п. 6). Но переносят на него именно беседой —
+  // из снимков прежней таблицы, — и промолчать о нём значит не дать
+  // беседе места, куда класть итоги периодов.
+  const history = data.accounts.filter((each) => !each.deleted && !each.archived && each.ledgerOnly)
+  if (history.length > 0) {
+    lines.push('', 'Счёт истории — только для итогов прежней таблицы, выписки на него не клади никогда:')
+    for (const account of history) lines.push(`  - «${account.name}» (${account.currency})`)
+    lines.push(
+      'Если мои данные — таблица учёта с итогами за периоды, клади их на этот счёт записями ' +
+        'с "periodFrom" и "periodTo" вместо "date". Период с обычными и особыми тратами — две записи: ' +
+        'обычная и вторая с "special": true.',
+    )
+  }
+
   const expense = data.categories.filter((each) => !each.deleted && !each.archived && each.side === 'expense')
   const income = data.categories.filter((each) => !each.deleted && !each.archived && each.side === 'income')
   if (expense.length > 0) lines.push('', `Расходные категории: ${expense.map((each) => each.name).join(', ')}.`)
