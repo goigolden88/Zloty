@@ -582,6 +582,16 @@ async function scenario(profile) {
   check('в настройках есть синхронизация', has(settings, 'Синхронизация'), line(settings, 'Синхронизация'))
   check('в настройках есть копия данных', has(settings, 'Копия данных'), line(settings, 'Копия данных'))
 
+  await act(`startsWith('.fold__btn', 'Напоминания').click();`)
+  await sleep(500)
+  const remind = await screen()
+  check('в настройках есть напоминания', has(remind, 'Месяц не внесён'), line(remind, 'Месяц не внесён'))
+  check(
+    'и сроки в них — из констант, а не вписаны',
+    /\d+-го числа/.test(remind),
+    line(remind, '-го числа'),
+  )
+
   await act(`startsWith('.fold__btn', 'О приложении').click();`)
   await sleep(500)
   const about = await screen()

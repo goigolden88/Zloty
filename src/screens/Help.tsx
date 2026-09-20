@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { days, plural, timeSpan } from '../shared/core/dates.ts'
 import { QUIET_MS } from '../shared/core/sync.ts'
 import { DAYS_IN_MONTH, USUAL_MONTHS } from '../modules/ledger/month.ts'
+import { RECURRING_FROM_DAY, REMIND_FROM_DAY } from '../modules/ledger/remind.ts'
 import { MAX_DECIMALS } from '../modules/money/money.ts'
 import { RATE_MAX_AGE_DAYS } from '../modules/money/rates.ts'
 import { STALE_DAYS as BACKUP_DAYS } from '../shared/ui/backup.ts'
@@ -237,6 +238,26 @@ export function Help() {
             {days(BACKUP_DAYS)}, приложение напомнит.
           </li>
           <li>Токен хранится в браузере этого устройства и наружу не уходит. У каждого устройства свой.</li>
+        </ul>
+      </Fold>
+
+      <Fold id="help:remind" title="Напоминания" folded>
+        <ul>
+          <li>
+            Приложение напомнит о двух вещах: <b>прошлый месяц не внесён</b> — с{' '}
+            {REMIND_FROM_DAY}-го числа следующего месяца, не раньше: выписка формируется не мгновенно, —
+            и <b>регулярные этого месяца ещё не записаны</b>, с {RECURRING_FROM_DAY}-го числа.
+          </li>
+          <li>
+            Больше ни о чём: напоминание, которое приходит всегда, перестают читать. Если напоминать
+            не о чем, а вы нажали «Проверить сейчас», придёт пустое уведомление — чтобы было видно,
+            что они доходят.
+          </li>
+          <li>
+            Включаются кнопкой в <Link to="/settings">«Настройках»</Link>: разрешение браузер
+            спрашивает только по действию человека. Работают у установленного иконкой приложения,
+            даже закрытого.
+          </li>
         </ul>
       </Fold>
 
