@@ -425,6 +425,14 @@ describe('промпт знает справочники и загруженно
     expect(notes).toContain('"special": true')
   })
 
+  it('и говорит, как читать таблицу: столбцы обычных трат складываются, итог строки не переносится', () => {
+    const ledgerOnly: Account = { ...BANK, id: 'acc-3', name: 'Таблица', ledgerOnly: true }
+    const notes = ledgerPromptNotes(base({ accounts: [BANK, ledgerOnly] }), new Map())
+    expect(notes).toContain('сложи в одну запись')
+    expect(notes).toContain('Столбец «сумма» не переноси')
+    expect(notes).toContain('начало и конец совпадают')
+  })
+
   it('счёта истории нет — и строки о нём нет', () => {
     expect(ledgerPromptNotes(base({ accounts: [BANK] }), new Map())).not.toContain('Счёт истории')
   })
