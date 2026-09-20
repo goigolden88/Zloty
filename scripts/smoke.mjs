@@ -319,6 +319,16 @@ async function scenario(profile) {
   const again = await screen()
   check('справочники пережили перезагрузку', has(again, 'Синий банк') && has(again, 'RUB'), line(again, 'Синий банк'))
 
+  // Пока ни одной записи нет, главный экран обязан сказать это словами,
+  // а не показать ноль: ноль значил бы «ничего не заработал» (Р-07).
+  await go('/')
+  const empty = await screen()
+  check(
+    '«Месяц» на пустой базе говорит, что дохода нет, а не показывает ноль',
+    has(empty, 'Доход за этот месяц не внесён'),
+    line(empty, 'не внесён'),
+  )
+
   // ── Операции: ввод руками и правило «либо итог, либо операции» (Р-02).
   //    Второе проверяется отказом: правило, которое некому нарушить,
   //    прогоном не проверено.
@@ -426,6 +436,42 @@ async function scenario(profile) {
   await go('/entries')
   const afterImport = await screen()
   check('загруженная операция видна в месяце', has(afterImport, '120,50'), line(afterImport, '120,50'))
+
+  // ── «Месяц»: главный вопрос приложения. Проверяется и то, что доход,
+  //    которого нет, назван честно, а не показан нулём (Р-07).
+  // Вносим доход — и экран обязан ответить числом с основанием.
+  await go('/entries')
+  await act(`byText('button', 'Внести').click();`)
+  await sleep(500)
+  await act(`
+    const kind = document.querySelectorAll('select')[0];
+    set(kind, 'income');
+    kind.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('input[placeholder="1234,56"]'), '100000');
+    const category = [...document.querySelectorAll('select')].find((each) =>
+      [...each.options].some((option) => option.textContent.trim() === 'Кэшбэк'));
+    set(category, [...category.options].find((option) => option.textContent.trim() === 'Кэшбэк').value);
+    category.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать').click();`)
+  await sleep(700)
+
+  await go('/')
+  const month = await screen()
+  check('«Месяц» считает отложенное', has(month, 'Отложено'), line(month, 'Отложено'))
+  check(
+    'у числа есть основание — по скольким операциям',
+    /по \d+ операци(и|ям)/.test(month),
+    line(month, 'операциям'),
+  )
+  check('норма сбережений показана долей', /\d+% дохода/.test(month), line(month, '% дохода'))
+  check('видно, из чего вышло', has(month, 'Расход обычный'), line(month, 'Расход обычный'))
+  check('обычный месяц честно говорит, что считать не по чему', has(month, 'Считать не по чему'), line(month, 'Считать не по чему'))
+  check('есть столбики по месяцам', has(month, 'Расход по месяцам'), line(month, 'Расход по месяцам'))
 
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
