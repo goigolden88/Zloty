@@ -9,6 +9,9 @@ import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
 import { addMonths, formatDate, formatMonth, monthOf, today } from '../shared/core/dates.ts'
+import { feedDateText, feedHeading, filterFeed, groupFeed, recordsText } from '../shared/core/feed.ts'
+import { feedItems } from '../registry.ts'
+import { useFeed } from '../shared/screens/useFeed.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
 
 /**
@@ -24,6 +27,8 @@ export function Entries() {
   const entries = useEntries()
   const [month, setMonth] = useState(() => monthOf(today()))
   const [adding, setAdding] = useState(false)
+  const [query, setQuery] = useState('')
+  const searching = query.trim().length > 0
 
   const busy = ledger.status === 'loading' || entries.status === 'loading'
   const failed = ledger.status === 'failed' || entries.status === 'failed'
@@ -49,15 +54,17 @@ export function Entries() {
         </div>
       </header>
 
-      <div className="row month-row">
-        <button type="button" onClick={() => setMonth(addMonths(month, -1))} aria-label="Прошлый месяц">
-          ←
-        </button>
-        <b>{formatMonth(month)}</b>
-        <button type="button" onClick={() => setMonth(addMonths(month, 1))} aria-label="Следующий месяц">
-          →
-        </button>
-      </div>
+      {!searching && (
+        <div className="row month-row">
+          <button type="button" onClick={() => setMonth(addMonths(month, -1))} aria-label="Прошлый месяц">
+            ←
+          </button>
+          <b>{formatMonth(month)}</b>
+          <button type="button" onClick={() => setMonth(addMonths(month, 1))} aria-label="Следующий месяц">
+            →
+          </button>
+        </div>
+      )}
 
       {busy && <p className="muted">Читаю…</p>}
       {failed && <p className="error">{ledger.error || entries.error}</p>}
@@ -86,25 +93,93 @@ export function Entries() {
             </div>
           )}
 
-          <RecurringBlock ledger={ledger.data} entries={entries.all} month={month} />
+          <div className="row">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Найти по всей истории"
+              aria-label="Найти по всей истории"
+            />
+            {searching && (
+              <button type="button" onClick={() => setQuery('')}>
+                Сбросить
+              </button>
+            )}
+          </div>
 
-          <Periods list={shown.periods} ledger={ledger.data} />
-
-          <h2>Операции месяца</h2>
-          {shown.operations.length === 0 ? (
-            <p className="muted">
-              За этот месяц ничего не внесено. Выписку банка можно{' '}
-              <Link to="/import">загрузить</Link>, а руками вносится то, чего в выписке не будет.
-            </p>
+          {searching ? (
+            <Search query={query} />
           ) : (
-            <ul className="plain">
-              {shown.operations.map((entry) => (
-                <EntryLine key={entry.id} entry={entry} ledger={ledger.data} />
-              ))}
-            </ul>
+            <>
+              <RecurringBlock ledger={ledger.data} entries={entries.all} month={month} />
+
+              <Periods list={shown.periods} ledger={ledger.data} />
+
+              <h2>Операции месяца</h2>
+              {shown.operations.length === 0 ? (
+                <p className="muted">
+                  За этот месяц ничего не внесено. Выписку банка можно{' '}
+                  <Link to="/import">загрузить</Link>, а руками вносится то, чего в выписке не будет.
+                </p>
+              ) : (
+                <ul className="plain">
+                  {shown.operations.map((entry) => (
+                    <EntryLine key={entry.id} entry={entry} ledger={ledger.data} />
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </>
       )}
+    </>
+  )
+}
+
+// ─── Поиск по всей истории (Р-15) ──────────────────────────────────────────
+
+/**
+ * Поиск живёт здесь, а не на отдельной вкладке «Лента» (Р-15): два похожих
+ * списка записей рядом заставляли бы вспоминать, в какой идти.
+ *
+ * Механика — ядра: слова запроса ищутся по отдельности и нужны все, дата
+ * ищется цифрами и словами, а ищется и то, чего на экране нет, — исходная
+ * строка выписки и заметка.
+ */
+function Search({ query }: { query: string }) {
+  // Слепок базы берёт ядро: строки ленты знают все хранилища сразу, и когда
+  // долги и снимки капитала добавят свои, поиск найдёт их, не меняя экрана.
+  const feed = useFeed(feedItems)
+  const found = filterFeed(feed.items, { query })
+  const groups = groupFeed(found)
+
+  if (feed.status === 'loading') return <p className="muted">Ищу…</p>
+  if (feed.status === 'failed') return <p className="error">{feed.error}</p>
+
+  if (found.length === 0) {
+    return <p className="muted">Ничего не нашлось. Ищется и по описанию из выписки, и по заметке, и по дате.</p>
+  }
+
+  return (
+    <>
+      <p className="basis">Найдено: {recordsText(found.length)} — по всей истории, а не за месяц</p>
+      {groups.map((group) => (
+        <div key={group.month ?? 'без даты'} className="block">
+          <h2>{feedHeading(group.month)}</h2>
+          <ul className="plain">
+            {group.items.map((item) => (
+              <li key={item.id} className="line">
+                <div className="line__main">
+                  <b>{item.title}</b>
+                  <div className="muted">
+                    {feedDateText(item.date)} · {item.detail}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </>
   )
 }

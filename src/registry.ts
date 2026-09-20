@@ -6,8 +6,12 @@
  * мест, которые знают все модули разом, — вместе с `app.tsx`, `notify.ts`
  * и `screens/`. Модули друг про друга не знают.
  *
- * Растёт по этапам: сейчас — подпись и импорт; лента и markdown придут
- * вместе со своим пунктом Этапа 1, долги и капитал — своими этапами.
+ * Растёт по этапам: сейчас — подпись, импорт, строки ленты и markdown;
+ * долги и капитал придут своими этапами.
+ *
+ * Отдельного экрана ленты у «Злотых» нет (Р-15): строками ищут внутри
+ * «Операций». Строки всё равно собираются здесь — это договор семьи,
+ * и когда появятся долги и снимки, они лягут в тот же список.
  *
  * Образец — `registry.ts` «Трапезы» (её Р-53). Своё здесь — замена итога
  * периода операциями: единственное место, где импорт не только добавляет
@@ -15,11 +19,13 @@
  */
 
 import type { Snapshot } from './shared/core/db.ts'
-import type { DateStr } from './shared/core/dates.ts'
+import type { DateStr, Period } from './shared/core/dates.ts'
+import type { FeedItem } from './shared/core/feed.ts'
 import { mergeResults, type ImportContext, type ImportPlan, type ImportSpec } from './shared/core/importing.ts'
 import { importing } from './app/core.ts'
 import type { StoreRecord } from './app/model.ts'
 import { lastDayOn } from './modules/ledger/entries.ts'
+import { entryFeed, entryMarkdown, ENTRY_KIND, type FeedData } from './modules/ledger/feed.ts'
 import {
   accountsImportSpec,
   categoriesImportSpec,
@@ -80,6 +86,47 @@ function withWrites(data: Data, plan: Plan): Data {
     next[store] = [...(next[store] ?? []).filter((record) => !ids.has(record.id)), ...records]
   }
   return next as unknown as Data
+}
+
+/** Что нужно строкам ленты из слепка базы. */
+function feedData(data: Data): FeedData {
+  return {
+    entries: data.entries,
+    accounts: data.accounts,
+    categories: data.categories,
+    currencies: data.currencies,
+  }
+}
+
+/** Подпись вида записи. Незнакомый вид подписывается как есть. */
+export function kindLabel(kind: string): string {
+  return kind === ENTRY_KIND ? 'Учёт' : kind
+}
+
+/**
+ * Все строки ленты, без порядка: порядок — дело `shared/core/feed.ts`.
+ *
+ * Вид пока один. Долги и снимки капитала добавят сюда свои строки,
+ * и поиск станет общим, не меняя ни одного экрана.
+ */
+export function feedItems(data: Data): FeedItem[] {
+  return entryFeed(feedData(data))
+}
+
+/**
+ * Выгрузка в markdown — читать глазами, а не переносить: обратно файл
+ * не загружается, для переноса есть копия в JSON.
+ */
+export function markdownExport(data: Data, day: DateStr, span: { period: Period; label: string } | null): string {
+  const head = [
+    '# Злотые',
+    '',
+    `Выгрузка от ${day}. Для чтения: обратно в приложение этот файл не загружается,`,
+    'для переноса данных есть копия в JSON — «Настройки» → «Копия данных».',
+  ]
+  if (span) head.push('', `Период: ${span.label}.`)
+
+  return `${head.join('\n')}\n\n## Учёт\n\n${entryMarkdown(feedData(data), span?.period ?? null)}\n`
 }
 
 /**

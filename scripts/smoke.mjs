@@ -562,6 +562,28 @@ async function scenario(profile) {
     line(month, 'прежней таблицы'),
   )
 
+  // ── Поиск по всей истории (Р-15): отдельной вкладки «Лента» нет,
+  //    ищется внутри «Операций» — и по тому, чего на экране не видно.
+  await go('/entries')
+  await act(`
+    const field = document.querySelector('input[placeholder="Найти по всей истории"]');
+    set(field, 'метро');
+  `)
+  await sleep(800)
+  const found = await screen()
+  check('поиск находит по описанию из выписки', has(found, '120,50'), line(found, '120,50'))
+  check('и говорит, что искал по всей истории', has(found, 'по всей истории, а не за месяц'), line(found, 'Найдено'))
+
+  await act(`
+    const field = document.querySelector('input[placeholder="Найти по всей истории"]');
+    set(field, 'такого точно нет');
+  `)
+  await sleep(700)
+  const empty2 = await screen()
+  check('и честно говорит, когда не нашлось', has(empty2, 'Ничего не нашлось'), line(empty2, 'Ничего не нашлось'))
+  await act(`byText('button', 'Сбросить').click();`)
+  await sleep(500)
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()

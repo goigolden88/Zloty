@@ -3,7 +3,8 @@ import { config } from '../app/config.ts'
 import { db } from '../app/core.ts'
 import { CHANGES } from '../changes.ts'
 import { SCHEMA_VERSION, SYNCED_STORES } from '../app/model.ts'
-import { today } from '../shared/core/dates.ts'
+import { monthPeriod, monthOf, formatMonth, today } from '../shared/core/dates.ts'
+import { markdownExport } from '../registry.ts'
 import { backupNote, backupSummary } from '../shared/ui/backup.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
 import { InstallNote } from '../shared/ui/Install.tsx'
@@ -122,6 +123,24 @@ function Backup({ onChanged }: { onChanged: () => Promise<void> }) {
     }
   }
 
+  /** Выгрузка в markdown: месяц или всё время. */
+  async function asText(month: string | null) {
+    setBusy(true)
+    setNote('')
+    setError('')
+    try {
+      const data = (await db.exportAll()).data
+      const span = month ? { period: monthPeriod(month), label: formatMonth(month) } : null
+      const text = markdownExport(data, today(), span)
+      download(`${config.dbName}-${month ?? 'всё'}.md`, text, 'text/markdown')
+      setNote('Файл сохранён')
+    } catch (failure) {
+      setError(describe(failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function open(file: File) {
     setBusy(true)
     setNote('')
@@ -176,12 +195,26 @@ function Backup({ onChanged }: { onChanged: () => Promise<void> }) {
 
       {note && <p className="note">{note}</p>}
       {error && <p className="error">{error}</p>}
+
+      <h3>Выгрузка для чтения</h3>
+      <p className="muted">
+        Текстом, а не для переноса: обратно такой файл не загружается. Пригодится, чтобы разобрать
+        месяц в беседе с ИИ.
+      </p>
+      <div className="row row--wrap">
+        <button type="button" disabled={busy} onClick={() => void asText(null)}>
+          Весь учёт
+        </button>
+        <button type="button" disabled={busy} onClick={() => void asText(monthOf(today()))}>
+          Этот месяц
+        </button>
+      </div>
     </Fold>
   )
 }
 
-function download(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+function download(name: string, text: string, type = 'application/json'): void {
+  const url = URL.createObjectURL(new Blob([text], { type }))
   const link = document.createElement('a')
   link.href = url
   link.download = name
