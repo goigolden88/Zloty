@@ -562,6 +562,40 @@ async function scenario(profile) {
     line(month, 'прежней таблицы'),
   )
 
+  // ── Правка загруженной операции: ключ импорта обязан её пережить,
+  //    иначе следующая выписка принесёт дубль (Р-12, «Цена», п. 2).
+  await go('/entries')
+  await act(`
+    const row = [...document.querySelectorAll('li')].find((el) => el.textContent.includes('120,50'));
+    [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Изменить').click();
+  `)
+  await sleep(600)
+  await act(`
+    const note = [...document.querySelectorAll('.field')].find((el) => el.textContent.includes('Заметка'));
+    set(note.querySelector('input'), 'поправил руками');
+    byText('button', 'Сохранить').click();
+  `)
+  await sleep(800)
+  const edited = await screen()
+  check('операцию можно поправить', has(edited, 'поправил руками'), line(edited, 'поправил руками'))
+
+  // Та же выписка второй раз: поправленная операция обязана отсечься
+  // по ключу, а не приехать второй копией.
+  await go('/import')
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(FILE)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  const afterEdit = await screen()
+  check(
+    'поправленная операция не приходит выпиской второй раз',
+    has(afterEdit, 'Добавлять нечего'),
+    line(afterEdit, 'Добавлять нечего'),
+  )
+
   // ── Поиск по всей истории (Р-15): отдельной вкладки «Лента» нет,
   //    ищется внутри «Операций» — и по тому, чего на экране не видно.
   await go('/entries')

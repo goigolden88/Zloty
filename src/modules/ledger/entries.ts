@@ -88,7 +88,7 @@ export function makeEntry(draft: EntryDraft, data: EntryData, id: string = ulid(
   const kindProblem = checkKind(draft, data, account)
   if (kindProblem) return { problem: kindProblem }
 
-  const clash = periodClash(draft, data, account.id)
+  const clash = periodClash(draft, data, account.id, id)
   if (clash) return { problem: clash }
 
   const entry: Entry = {
@@ -109,6 +109,48 @@ export function makeEntry(draft: EntryDraft, data: EntryData, id: string = ulid(
   if (draft.note?.trim()) entry.note = draft.note.trim()
 
   return { entry }
+}
+
+/**
+ * Правка записи.
+ *
+ * **Ключ импорта и исходная строка выписки остаются как были** (Р-12, п. 4):
+ * `ext` пишется один раз и не меняется никогда. Ровно поэтому правка
+ * безопасна — поправленная категория не ломает ловлю повторов, и та же
+ * выписка, загруженная снова, не принесёт дубль.
+ *
+ * Это единственный способ починить раскладку, которую беседа сделала не так
+ * (02-Архитектура, «Известные слабые места»): удалить и внести заново нельзя —
+ * внесённое руками ключа не имеет, и следующая выписка его удвоит.
+ */
+export function editEntry(entry: Entry, draft: EntryDraft, data: EntryData): Made {
+  const made = makeEntry(draft, data, entry.id)
+  if ('problem' in made) return made
+
+  const next = made.entry
+  if (entry.ext) next.ext = entry.ext
+  if (entry.bankText) next.bankText = entry.bankText
+  if (entry.recurringId) next.recurringId = entry.recurringId
+  if (entry.refs) next.refs = entry.refs
+  return { entry: next }
+}
+
+/** Что показать в форме правки: запись обратно в то, что вводят. */
+export function draftOf(entry: Entry, decimals: number): EntryDraft {
+  const draft: EntryDraft = {
+    kind: entry.kind,
+    accountId: entry.accountId,
+    amount: String(entry.money.amount / 10 ** decimals),
+  }
+  if (entry.date) draft.date = entry.date
+  if (entry.period) draft.period = entry.period
+  if (entry.time) draft.time = entry.time
+  if (entry.categoryId) draft.categoryId = entry.categoryId
+  if (entry.toAccountId) draft.toAccountId = entry.toAccountId
+  if (entry.special) draft.special = true
+  if (entry.for) draft.for = entry.for
+  if (entry.note) draft.note = entry.note
+  return draft
 }
 
 function whenProblem(draft: EntryDraft): string | null {
@@ -185,14 +227,22 @@ function span(entry: Entry): { from: string; to: string } | null {
  *
  * Переводы не в счёт вовсе: они не расход и не доход.
  */
-export function periodClash(draft: EntryDraft, data: EntryData, accountId: string): string | null {
+export function periodClash(
+  draft: EntryDraft,
+  data: EntryData,
+  accountId: string,
+  selfId?: string,
+): string | null {
   const mine = draft.period ?? (draft.date ? { from: draft.date, to: draft.date } : null)
   if (!mine) return null
   if (draft.kind === 'transfer') return null
 
+  // При правке запись не спорит сама с собой: иначе поправить у итога
+  // периода заметку было бы нельзя — он сталкивался бы с собой же.
   const onAccount = data.entries.filter(
     (each) =>
       !each.deleted &&
+      each.id !== selfId &&
       each.accountId === accountId &&
       each.kind === draft.kind &&
       Boolean(each.special) === Boolean(draft.special),

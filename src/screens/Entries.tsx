@@ -3,7 +3,14 @@ import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Category, Entry } from '../app/model.ts'
 import { active, activeCategories } from '../modules/ledger/ledger.ts'
-import { entriesOfMonth, makeEntry, type EntryData, type EntryDraft } from '../modules/ledger/entries.ts'
+import {
+  draftOf,
+  editEntry,
+  entriesOfMonth,
+  makeEntry,
+  type EntryData,
+  type EntryDraft,
+} from '../modules/ledger/entries.ts'
 import { dueThisMonth, enterAll, enterRecurring, leftToPay, type Due } from '../modules/ledger/recurring.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
@@ -27,6 +34,7 @@ export function Entries() {
   const entries = useEntries()
   const [month, setMonth] = useState(() => monthOf(today()))
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<Entry | null>(null)
   const [query, setQuery] = useState('')
   const searching = query.trim().length > 0
 
@@ -78,12 +86,19 @@ export function Entries() {
 
       {!busy && !failed && accounts.length > 0 && (
         <>
-          {adding ? (
+          {adding || editing ? (
             <EntryForm
+              // Форма помнит своё состояние: без ключа «Изменить» на другой
+              // записи открыло бы её с прежними значениями.
+              key={editing?.id ?? 'new'}
               ledger={ledger.data}
               entries={entries.all}
               month={month}
-              onDone={() => setAdding(false)}
+              record={editing}
+              onDone={() => {
+                setAdding(false)
+                setEditing(null)
+              }}
             />
           ) : (
             <div className="row">
@@ -124,7 +139,7 @@ export function Entries() {
               ) : (
                 <ul className="plain">
                   {shown.operations.map((entry) => (
-                    <EntryLine key={entry.id} entry={entry} ledger={ledger.data} />
+                    <EntryLine key={entry.id} entry={entry} ledger={ledger.data} onEdit={setEditing} />
                   ))}
                 </ul>
               )}
@@ -300,7 +315,15 @@ function kindWord(entry: Entry): string {
   return entry.kind === 'income' ? 'доход' : 'расход'
 }
 
-function EntryLine({ entry, ledger }: { entry: Entry; ledger: LedgerData }) {
+function EntryLine({
+  entry,
+  ledger,
+  onEdit,
+}: {
+  entry: Entry
+  ledger: LedgerData
+  onEdit: (entry: Entry) => void
+}) {
   const [asking, setAsking] = useState(false)
   const category = categoryName(ledger, entry.categoryId)
 
@@ -330,9 +353,14 @@ function EntryLine({ entry, ledger }: { entry: Entry; ledger: LedgerData }) {
           </button>
         </div>
       ) : (
-        <button type="button" onClick={() => setAsking(true)}>
-          Удалить
-        </button>
+        <div className="row row--wrap">
+          <button type="button" onClick={() => onEdit(entry)}>
+            Изменить
+          </button>
+          <button type="button" onClick={() => setAsking(true)}>
+            Удалить
+          </button>
+        </div>
       )}
     </li>
   )
@@ -379,25 +407,37 @@ function EntryForm({
   ledger,
   entries,
   month,
+  record,
   onDone,
 }: {
   ledger: LedgerData
   entries: readonly Entry[]
   month: string
+  /** Запись, которую правят. Null — вносят новую. */
+  record: Entry | null
   onDone: () => void
 }) {
   const accounts = active(ledger.accounts)
-  const [kind, setKind] = useState<FormKind>('expense')
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
-  const [toAccountId, setToAccountId] = useState('')
-  const [amount, setAmount] = useState('')
-  const [date, setDate] = useState(() => (monthOf(today()) === month ? today() : `${month}-01`))
-  const [from, setFrom] = useState(`${month}-01`)
-  const [to, setTo] = useState(`${month}-28`)
-  const [categoryId, setCategoryId] = useState('')
-  const [special, setSpecial] = useState(false)
-  const [forMonth, setForMonth] = useState('')
-  const [note, setNote] = useState('')
+
+  // Поправить загруженную операцию — единственный способ починить
+  // раскладку, которую беседа сделала не так: удалить и внести заново
+  // нельзя, внесённое руками ключа импорта не имеет, и следующая выписка
+  // принесёт дубль (Р-12, «Цена», п. 2).
+  const was = record
+    ? draftOf(record, findCurrency(ledger.currencies, record.money.currency)?.decimals ?? 2)
+    : null
+
+  const [kind, setKind] = useState<FormKind>(was ? (was.period ? 'period' : was.kind) : 'expense')
+  const [accountId, setAccountId] = useState(was?.accountId ?? accounts[0]?.id ?? '')
+  const [toAccountId, setToAccountId] = useState(was?.toAccountId ?? '')
+  const [amount, setAmount] = useState(was?.amount ?? '')
+  const [date, setDate] = useState(was?.date ?? (monthOf(today()) === month ? today() : `${month}-01`))
+  const [from, setFrom] = useState(was?.period?.from ?? `${month}-01`)
+  const [to, setTo] = useState(was?.period?.to ?? `${month}-28`)
+  const [categoryId, setCategoryId] = useState(was?.categoryId ?? '')
+  const [special, setSpecial] = useState(was?.special === true)
+  const [forMonth, setForMonth] = useState(was?.for ?? '')
+  const [note, setNote] = useState(was?.note ?? '')
   const [error, setError] = useState('')
 
   const side: Category['side'] = kind === 'income' ? 'income' : 'expense'
@@ -424,7 +464,7 @@ function EntryForm({
     if (forMonth) draft.for = forMonth
     if (note.trim()) draft.note = note
 
-    const result = makeEntry(draft, data)
+    const result = record ? editEntry(record, draft, data) : makeEntry(draft, data)
     if ('problem' in result) return setError(result.problem)
 
     setError('')
@@ -552,10 +592,18 @@ function EntryForm({
         <input value={note} onChange={(event) => setNote(event.target.value)} />
       </label>
 
-      <p className="muted">
-        Руками вносите только то, чего не будет в выписке: наличные и итоги прежней таблицы. Внесённая
-        руками операция и она же из выписки не склеятся — выйдет двойная запись.
-      </p>
+      {record ? (
+        <p className="muted">
+          Правка не ломает ловлю повторов: ключ, по которому приложение узнаёт уже загруженное, записан
+          один раз и не меняется. Поэтому поправить категорию у операции из выписки — правильнее, чем
+          удалить её и внести заново.
+        </p>
+      ) : (
+        <p className="muted">
+          Руками вносите только то, чего не будет в выписке: наличные и итоги прежней таблицы. Внесённая
+          руками операция и она же из выписки не склеятся — выйдет двойная запись.
+        </p>
+      )}
 
       {error && <p className="error">{error}</p>}
 
@@ -564,7 +612,7 @@ function EntryForm({
           Отмена
         </button>
         <button type="button" className="btn--primary" onClick={() => void save()}>
-          Записать
+          {record ? 'Сохранить' : 'Записать'}
         </button>
       </div>
     </div>

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Account, Currency, Entry } from '../../app/model.ts'
-import { entriesOfMonth, lastDayOn, makeEntry, type EntryData, type EntryDraft } from './entries.ts'
+import {
+  draftOf,
+  editEntry,
+  entriesOfMonth,
+  lastDayOn,
+  makeEntry,
+  type EntryData,
+  type EntryDraft,
+} from './entries.ts'
 
 /** Суммы, счета и даты примеров выдуманы: код публичный (CLAUDE.md). */
 const AT = '2026-09-20T10:00:00.000Z'
@@ -211,6 +219,56 @@ describe('пустые поля не пишутся', () => {
 
   it('внесённая руками запись ключа импорта не получает (Р-12)', () => {
     expect('ext' in made(makeEntry(draft(), data()))).toBe(false)
+  })
+})
+
+describe('правка записи (Р-12, п. 4)', () => {
+  const loaded: Entry = {
+    id: 'e-1',
+    updatedAt: AT,
+    kind: 'expense',
+    accountId: BANK.id,
+    money: { amount: 34990, currency: 'RUB' },
+    date: '2026-09-14',
+    categoryId: 'cat-food',
+    ext: 'acc-1:A-77',
+    bankText: 'МАГАЗИН У ДОМА 349.90',
+  }
+
+  it('ключ импорта и строка выписки переживают правку', () => {
+    const next = made(editEntry(loaded, { ...draftOf(loaded, 2), special: true }, data([loaded])))
+    expect(next.id).toBe('e-1')
+    expect(next.ext).toBe('acc-1:A-77')
+    expect(next.bankText).toBe('МАГАЗИН У ДОМА 349.90')
+    expect(next.special).toBe(true)
+  })
+
+  it('поправленная сумма ключ не ломает: он хранимый, а не вычисляемый', () => {
+    const next = made(editEntry(loaded, { ...draftOf(loaded, 2), amount: '400' }, data([loaded])))
+    expect(next.money.amount).toBe(40000)
+    expect(next.ext).toBe('acc-1:A-77')
+  })
+
+  it('запись не спорит сама с собой по правилу «либо итог, либо операции»', () => {
+    const total: Entry = {
+      id: 'e-2',
+      updatedAt: AT,
+      kind: 'expense',
+      accountId: BANK.id,
+      money: { amount: 900000, currency: 'RUB' },
+      period: { from: '2026-09-01', to: '2026-09-30' },
+    }
+    const next = made(editEntry(total, { ...draftOf(total, 2), note: 'поправил' }, data([total])))
+    expect(next.note).toBe('поправил')
+  })
+
+  it('правка проверяется теми же правилами: доходная категория расходу не годится', () => {
+    const wrong = { ...draftOf(loaded, 2), categoryId: 'cat-pay' }
+    expect(problem(editEntry(loaded, wrong, data([loaded])))).toContain('доходная категория')
+  })
+
+  it('черновик из записи возвращает сумму в обычных единицах', () => {
+    expect(draftOf(loaded, 2).amount).toBe('349.9')
   })
 })
 
