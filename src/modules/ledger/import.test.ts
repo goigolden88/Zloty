@@ -672,3 +672,34 @@ describe('промпт помнит, что я считаю особым', () =>
     expect(ledgerPromptNotes(base({ entries }), new Map())).not.toContain('особая трата')
   })
 })
+
+describe('пометка «особая» в промпте — голосованием, а не двумя строками', () => {
+  function bought(id: string, special?: boolean): Entry {
+    return {
+      id,
+      updatedAt: AT,
+      kind: 'expense',
+      accountId: BANK.id,
+      money: { amount: 100, currency: 'RUB' },
+      date: '2026-09-14',
+      categoryId: FOOD.id,
+      bankText: 'ОЗОН',
+      ...(special ? { special: true } : {}),
+    }
+  }
+
+  it('одно описание даёт одну строку, даже если помечено по-разному', () => {
+    const samples = promptSamples(base({ entries: [bought('1', true), bought('2')] }))
+    expect(samples).toHaveLength(1)
+  })
+
+  it('большинство особых — пометка есть', () => {
+    const entries = [bought('1', true), bought('2', true), bought('3')]
+    expect(promptSamples(base({ entries }))[0]?.special).toBe(true)
+  })
+
+  it('большинство обычных — пометки нет', () => {
+    const entries = [bought('1', true), bought('2'), bought('3')]
+    expect(promptSamples(base({ entries }))[0]?.special).toBe(false)
+  })
+})

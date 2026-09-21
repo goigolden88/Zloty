@@ -790,26 +790,30 @@ type Sample = { text: string; category: string; special: boolean }
  */
 export function promptSamples(data: LedgerImportData, limit: number = PROMPT_SAMPLES): Sample[] {
   const names = new Map(data.categories.filter((each) => !each.deleted).map((each) => [each.id, each.name]))
-  const counts = new Map<string, { text: string; category: string; special: boolean; count: number }>()
+  const counts = new Map<string, { text: string; category: string; count: number; special: number }>()
 
   // «Особая» — суждение человека, а не свойство продавца: поездки, техника,
   // лечение у каждого свои. Взять его неоткуда, кроме как из того, что он
   // уже отметил сам, — и тогда беседа перестаёт спрашивать об этом заново.
+  //
+  // Пометка не входит в ключ, а считается голосованием: одно и то же
+  // описание бывает и особым, и обычным, а промпт, сказавший о нём сразу
+  // и то и другое, хуже молчания.
   for (const entry of data.entries) {
     if (entry.deleted || !entry.bankText || !entry.categoryId) continue
     const category = names.get(entry.categoryId)
     if (!category) continue
-    const special = entry.special === true
-    const key = `${entry.bankText.trim().toLocaleLowerCase('ru')}→${category}→${special}`
-    const was = counts.get(key)
-    if (was) was.count += 1
-    else counts.set(key, { text: entry.bankText.trim(), category, special, count: 1 })
+    const key = `${entry.bankText.trim().toLocaleLowerCase('ru')}→${category}`
+    const was = counts.get(key) ?? { text: entry.bankText.trim(), category, count: 0, special: 0 }
+    was.count += 1
+    if (entry.special === true) was.special += 1
+    counts.set(key, was)
   }
 
   return [...counts.values()]
     .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text, 'ru'))
     .slice(0, limit)
-    .map(({ text, category, special }) => ({ text, category, special }))
+    .map(({ text, category, count, special }) => ({ text, category, special: special * 2 > count }))
 }
 
 // ─── Замена итога периода операциями (Р-02) ────────────────────────────────
