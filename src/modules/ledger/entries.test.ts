@@ -296,3 +296,41 @@ describe('чтение месяца', () => {
     expect(lastDayOn(list, 'нет такого')).toBeNull()
   })
 })
+
+describe('с какого дня брать следующую выписку (Р-12, п. 5; Р-19)', () => {
+  const AT2 = '2026-09-20T10:00:00.000Z'
+  const spend = (accountId: string, date: string): Entry => ({
+    id: `s-${date}-${accountId}`,
+    updatedAt: AT2,
+    kind: 'expense',
+    accountId,
+    money: { amount: 100, currency: 'RUB' },
+    date,
+    categoryId: 'cat',
+  })
+  const move = (from: string, to: string, date: string): Entry => ({
+    id: `t-${date}`,
+    updatedAt: AT2,
+    kind: 'transfer',
+    accountId: from,
+    toAccountId: to,
+    money: { amount: 2000, currency: 'RUB' },
+    date,
+  })
+
+  it('перевод со счёта не сдвигает день: он мог приехать из чужой выписки', () => {
+    // Выписка счёта «a» кончилась первого, но перевод с него на «b»
+    // пришёл из выписки «b» и датирован восемнадцатым.
+    const entries = [spend('a', '2026-09-01'), move('a', 'b', '2026-09-18')]
+    expect(lastDayOn(entries, 'a')).toBe('2026-09-01')
+  })
+
+  it('свои расход и доход день двигают', () => {
+    const entries = [spend('a', '2026-09-01'), spend('a', '2026-09-14')]
+    expect(lastDayOn(entries, 'a')).toBe('2026-09-14')
+  })
+
+  it('на счёте одни переводы — операций ещё нет', () => {
+    expect(lastDayOn([move('a', 'b', '2026-09-18')], 'a')).toBeNull()
+  })
+})

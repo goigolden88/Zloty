@@ -317,11 +317,22 @@ function byTime(a: Entry, b: Entry): number {
   return b.id.localeCompare(a.id)
 }
 
-/** Последний день, за который на счёте есть операции. Нужен промпту импорта (Р-12, п. 5). */
+/**
+ * Последний день, за который на счёте есть операции. Нужен промпту импорта
+ * (Р-12, п. 5): с этого дня человек берёт следующую выписку.
+ *
+ * **Переводы не считаются.** Перевод со счёта мог приехать из выписки
+ * другого счёта: одно движение — одна запись (Р-19), и пишется она со
+ * стороны отправителя, откуда бы её ни прочитали. Если считать и их, то
+ * счёт, чья выписка кончилась первого числа, получил бы «загружено по
+ * восемнадцатое» — по чужому переводу, — и следующая выписка началась бы
+ * с восемнадцатого, потеряв две недели своих трат. Расход и доход такого
+ * не умеют: они бывают только в выписке своего счёта.
+ */
 export function lastDayOn(entries: readonly Entry[], accountId: string): string | null {
   let last: string | null = null
   for (const entry of entries) {
-    if (entry.deleted || entry.accountId !== accountId) continue
+    if (entry.deleted || entry.accountId !== accountId || entry.kind === 'transfer') continue
     const day = entry.date ?? entry.period?.to ?? null
     if (day && (last === null || day > last)) last = day
   }
