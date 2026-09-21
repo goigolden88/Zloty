@@ -549,6 +549,34 @@ async function scenario(profile) {
     line(mismatch, 'не сошлась'),
   )
 
+  // Счёт, заведённый этим же файлом, обязан называться по имени: сверка
+  //    смотрит в справочники после разбора, а не до него. Иначе человек
+  //    видит в отказе id вместо названия.
+  const NEW_ACCOUNT = JSON.stringify({
+    format: 'zloty-import',
+    version: 1,
+    accounts: [{ name: 'Жёлтый банк', currency: 'RUB', kind: 'savings' }],
+    entries: [
+      { kind: 'expense', account: 'Жёлтый банк', amount: 10, date: '2026-09-19', category: 'Транспорт', bankText: 'ТРАМВАЙ 10.00' },
+    ],
+  })
+
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(NEW_ACCOUNT)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  const fresh = await screen()
+  check(
+    'счёт из того же файла назван по имени, а не идентификатором',
+    has(fresh, 'Жёлтый банк: сверки по этому счёту нет'),
+    line(fresh, 'сверки по этому счёту нет'),
+  )
+  await act(`byText('button', 'Отмена').click();`)
+  await sleep(500)
+
   // Внесение наличных: сверки у «Наличных» нет и не будет, но движение
   //    объясняет остаток банка — перевод проходит по сверке одной стороны.
   const CASH_IN = JSON.stringify({
@@ -593,6 +621,11 @@ async function scenario(profile) {
     'и сам говорит, как разбирать несколько выписок',
     has(prompt, 'Разбирай выписки по одной'),
     line(prompt, 'Разбирай выписки по одной'),
+  )
+  check(
+    'промпт объясняет направление перевода: «account» — откуда',
+    has(prompt, 'счёт, ОТКУДА деньги ушли'),
+    line(prompt, 'ОТКУДА деньги ушли'),
   )
 
   await go('/entries')

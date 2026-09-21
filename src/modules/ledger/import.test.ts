@@ -3,6 +3,7 @@ import type { Account, Category, Currency, Entry } from '../../app/model.ts'
 import type { ImportContext } from '../../shared/core/importing.ts'
 import {
   applyChecks,
+  entriesImportSpec,
   importAccounts,
   importCategories,
   importChecks,
@@ -566,5 +567,21 @@ describe('промпт сам говорит, как разбирать неск
   it('счёт один — про несколько выписок молчит', () => {
     const notes = ledgerPromptNotes(base({ accounts: [BANK] }), new Map())
     expect(notes).not.toContain('Разбирай выписки по одной')
+  })
+})
+
+describe('промпт объясняет направление перевода (Р-16)', () => {
+  it('говорит, что «account» — откуда, а «toAccount» — куда', () => {
+    const about = entriesImportSpec.about
+    expect(about).toContain('"account" — это счёт, ОТКУДА деньги ушли')
+    expect(about).toContain('он идёт в "toAccount"')
+  })
+
+  it('среди примеров есть входящий перевод — тот случай, где ошибаются', () => {
+    const incoming = entriesImportSpec.example.find(
+      (each) => (each as { toAccount?: string }).toAccount === 'Синий банк',
+    )
+    expect(incoming).toBeDefined()
+    expect((incoming as { account?: string }).account).not.toBe('Синий банк')
   })
 })

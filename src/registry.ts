@@ -163,7 +163,12 @@ export function planImport(text: string, data: Data, ctx: ImportContext): Plan {
     })
   }
 
-  const plan = withChecks(mergeResults(results), sections[checksImportSpec.section], data)
+  // Справочники — те, что вышли из разбора: счёт мог завестись этим же
+  // файлом, и сверка обязана знать его название, а не показывать id.
+  // Записи — те, что были до разбора: новые придут отдельно, в `incoming`,
+  // и взятые отсюда же посчитались бы дважды.
+  const forChecks = { ...ledgerData(current), entries: ledgerData(data).entries }
+  const plan = withChecks(mergeResults(results), sections[checksImportSpec.section], forChecks)
   return withReplacedTotals(plan, data, ctx.now)
 }
 
@@ -172,11 +177,10 @@ export function planImport(text: string, data: Data, ctx: ImportContext): Plan {
  * сама выписка, записей не получает. Идёт до замены итогов периодов — иначе
  * итог заменили бы операции, которые в базу не попадут.
  */
-function withChecks(plan: Plan, raw: unknown, data: Data): Plan {
+function withChecks(plan: Plan, raw: unknown, ledger: LedgerImportData): Plan {
   const incoming = plan.writes.entries ?? []
   if (incoming.length === 0) return plan
 
-  const ledger = ledgerData(data)
   const { checks, issues } = importChecks(raw ?? [], ledger)
   const { kept, issues: refused } = applyChecks(checks, incoming, ledger)
 
