@@ -456,6 +456,8 @@ async function scenario(profile) {
       { kind: 'expense', account: 'Синий банк', amount: 120.5, date: '2026-09-18', category: 'Транспорт', bankText: 'МЕТРО 120.50' },
       { kind: 'income', account: 'Синий банк', amount: 30, date: '2026-09-18', category: 'Кэшбэк', bankText: 'КЭШБЭК' },
     ],
+    // Сверка (Р-16): без неё операции счёта не загрузятся вовсе.
+    checks: [{ account: 'Синий банк', from: '2026-09-18', to: '2026-09-18', income: 30, expense: 120.5 }],
   })
 
   await act(`
@@ -484,6 +486,65 @@ async function scenario(profile) {
   const repeat = await screen()
   check('повтор выписки не записывается', has(repeat, 'Добавлять нечего'), line(repeat, 'Добавлять нечего'))
   check('и про пропущенное сказано числом', has(repeat, 'Уже есть'), line(repeat, 'Уже есть'))
+
+  // ── Сверка выписки (Р-16). Главное, чего приложение не видело раньше:
+  //    беседа на большой выписке приносит часть операций и молчит об этом.
+  //    Проверяется обоими отказами — сверки нет и сверка не сошлась.
+  const NO_CHECKS = JSON.stringify({
+    format: 'zloty-import',
+    version: 1,
+    entries: [
+      { kind: 'expense', account: 'Синий банк', amount: 77.7, date: '2026-09-19', category: 'Транспорт', bankText: 'АВТОБУС 77.70' },
+    ],
+  })
+
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(NO_CHECKS)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  const without = await screen()
+  check(
+    'без сверки операции счёта не загружаются',
+    has(without, 'Добавлять нечего'),
+    line(without, 'Добавлять нечего'),
+  )
+  check(
+    'и сказано, чего не хватает',
+    has(without, 'сверки по этому счёту нет'),
+    line(without, 'сверки по этому счёту нет'),
+  )
+
+  const WRONG_CHECK = JSON.stringify({
+    format: 'zloty-import',
+    version: 1,
+    entries: [
+      { kind: 'expense', account: 'Синий банк', amount: 77.7, date: '2026-09-19', category: 'Транспорт', bankText: 'АВТОБУС 77.70' },
+    ],
+    // Выписка говорит, что ушло 999: беседа принесла не все строки.
+    checks: [{ account: 'Синий банк', from: '2026-09-19', to: '2026-09-19', income: 0, expense: 999 }],
+  })
+
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(WRONG_CHECK)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  const mismatch = await screen()
+  check(
+    'сверка не сошлась — записи не грузятся',
+    has(mismatch, 'Добавлять нечего'),
+    line(mismatch, 'Добавлять нечего'),
+  )
+  check(
+    'и разница названа суммой, а не «что-то не так»',
+    has(mismatch, 'не сошлась') && has(mismatch, '999,00'),
+    line(mismatch, 'не сошлась'),
+  )
 
   // Промпт обязан знать мои счета и категории — иначе беседа разложит наугад.
   await act(`startsWith('.fold__btn', 'Как подготовить файл').click();`)

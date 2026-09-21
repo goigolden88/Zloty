@@ -36,6 +36,7 @@ import {
   type ImportContext,
   type ImportPlan,
   type ImportSpec,
+  type Issue,
 } from '../../shared/core/importing.ts'
 import type { Account, Category, Currency, Entry, Rate, Recurring, StoreRecord } from '../../app/model.ts'
 import { findCurrency, formatMoney, parseAmount, suggestDecimals } from '../money/money.ts'
@@ -56,11 +57,14 @@ export type LedgerImportData = {
   rates: readonly Rate[]
 }
 
+/** Склонение записей учёта. Вынесено наружу: по нему реестр узнаёт свою строку в сводке. */
+export const ENTRY_FORMS: [string, string, string] = ['запись', 'записи', 'записей']
+
 const FORMS = {
   currency: ['валюта', 'валюты', 'валют'] as [string, string, string],
   account: ['счёт', 'счёта', 'счетов'] as [string, string, string],
   category: ['категория', 'категории', 'категорий'] as [string, string, string],
-  entry: ['запись', 'записи', 'записей'] as [string, string, string],
+  entry: ENTRY_FORMS,
   rate: ['курс', 'курса', 'курсов'] as [string, string, string],
 }
 
@@ -313,9 +317,17 @@ export function importRates(raw: unknown, data: LedgerImportData, ctx: ImportCon
 export const entriesImportSpec: ImportSpec = {
   section: 'entries',
   about:
-    'операции выписки и итоги периодов. Одна строка выписки — одна запись. Перевод между двумя моими ' +
+    'операции выписки и итоги периодов. Одна строка выписки — одна запись. Перенеси все строки до одной: ' +
+    'пропущенная операция — это не «мелочь», а неверный итог месяца. Перевод между двумя моими ' +
     'счетами — одна запись "transfer", а не две. Движения внутри одного счёта (с карты на накопительный ' +
-    'того же банка) не пиши вовсе: они ничего не меняют.',
+    'того же банка) не пиши вовсе: они ничего не меняют.\n' +
+    'Что считать переводом, а что доходом и расходом:\n' +
+    '  - внесение и снятие наличных — это "transfer" со счётом «Наличные» с одной стороны, а не доход и не расход;\n' +
+    '  - пополнение, у которого отправитель не назван, — тоже "transfer", без "toAccount", ' +
+    'и напиши в "note", что источник неизвестен. Доходом такое не считай: выдуманный доход завышает ' +
+    'то, сколько я отложил, а это главное число, ради которого всё затевалось;\n' +
+    '  - перевод другому человеку — это "expense" с категорией, а не "transfer". Перевод между своими ' +
+    'счетами — только когда обе стороны мои.',
   fields: [
     '"kind" — "expense" расход, "income" доход, "transfer" перевод между моими счетами. Обязательно. ' +
       'Знак в выписке говорит направление; кэшбэк и возврат покупки — это "income"',
@@ -323,7 +335,9 @@ export const entriesImportSpec: ImportSpec = {
     '"amount" — сумма в обычных единицах, положительная, без знака: 1234.56. Обязательно',
     '"date" — дата операции, ГГГГ-ММ-ДД. Обязательна, кроме итога за период',
     '"time" — время, ЧЧ:ММ, если оно есть в выписке. Оно помогает отличить две одинаковые операции',
-    '"category" — название категории; у "transfer" её не бывает. Недостающая заведётся',
+    '"category" — название категории. Обязательна у "expense" и "income"; у "transfer" её не бывает. ' +
+      'Недостающая заведётся. Не понял, что за продавец, — пиши «Прочее», но поле не бросай пустым: ' +
+      'запись без категории не загрузится вовсе',
     '"toAccount" — второй мой счёт у перевода, если он понятен из описания',
     '"special" — true, если трата особая: техника, поездка, лечение. Не уверен — не пиши',
     '"for" — ГГГГ-ММ, если платёж за другой месяц: «интернет за август»',
@@ -682,6 +696,9 @@ export function ledgerPromptNotes(data: LedgerImportData, lastDays: Map<string, 
           (last ? `: операции загружены по ${last} включительно — бери выписку с этого дня, его тоже` : ': операций ещё нет'),
       )
     }
+    lines.push(
+      'На каждую выписку, которую я дал, напиши строку в разделе «checks» — иначе её операции не загрузятся.',
+    )
   }
 
   // Счёт истории из списка выше исключён намеренно: выписки на него
@@ -810,6 +827,261 @@ export function replacedTotals(data: LedgerImportData, incoming: readonly Entry[
   return { tombstones, notes }
 }
 
+// ─── Сверка выписки (Р-16) ─────────────────────────────────────────────────
+
+/**
+ * Числа, которые выписка говорит о себе сама: остатки на начало и конец
+ * периода и обороты. Беседа их переписывает, а не считает.
+ *
+ * Зачем это есть. Беседа на большой выписке переходит с переноса на
+ * пересказ — приносит часть операций и не говорит об этом. Приложение иначе
+ * этого не видит: у него нет ничего, с чем сравнить. Сверка даёт то же, что
+ * у переноса истории дала сверка сумм по периодам (Р-08), — единственное
+ * число, которое не зависит от суждения беседы.
+ */
+export const checksImportSpec: ImportSpec = {
+  section: 'checks',
+  about:
+    'сверка: числа, которые выписка говорит о себе сама. Не считай их и не складывай — перепиши ' +
+    'из выписки как есть. По одной строке на каждую выписку, которую я тебе дал. ' +
+    'Без этой строки операции счёта не загрузятся вовсе: иначе мне нечем проверить, что перенесено всё, ' +
+    'а не часть.',
+  fields: [
+    '"account" — название счёта, из того же списка, что и в разделе «entries». Обязательно',
+    '"from" и "to" — начало и конец периода выписки, ГГГГ-ММ-ДД. Обязательно',
+    '"opening" и "closing" — остаток на начало и на конец периода, как их называет сама выписка',
+    '"income" и "expense" — обороты за период: сколько всего пришло и сколько ушло, если выписка их называет',
+    'Хотя бы одна пара обязательна — «opening» с «closing» или «income» с «expense». Есть обе — пиши обе',
+  ],
+  example: [
+    {
+      account: 'Синий банк',
+      from: '2026-08-20',
+      to: '2026-09-20',
+      opening: 381.02,
+      closing: 96.04,
+      income: 600,
+      expense: 884.98,
+    },
+  ],
+}
+
+/** Разобранная строка сверки. Суммы — в минимальных единицах валюты счёта. */
+export type Check = {
+  accountId: string
+  accountName: string
+  currency: string
+  from: string
+  to: string
+  opening: number | null
+  closing: number | null
+  income: number | null
+  expense: number | null
+}
+
+/**
+ * Разбор раздела. Записей не создаёт: сверка ничего не хранит, она решает,
+ * пускать ли записи. Кривая строка — не «сверка не сошлась», а «сверки нет»:
+ * счёт останется непроверенным, и записи не пройдут по тому же правилу.
+ */
+export function importChecks(raw: unknown, data: LedgerImportData): { checks: Check[]; issues: Issue[] } {
+  const section = checksImportSpec.section
+  const { records, issues } = recordsOf(section, raw)
+  const checks: Check[] = []
+
+  for (const { raw: record, index } of records) {
+    const name = textOf(record.account)
+    const title = name ?? `сверка ${index + 1}`
+
+    if (!name) {
+      issues.push({ section, title, reason: 'нет счёта ("account")' })
+      continue
+    }
+    const account = findByName(data.accounts, name)
+    if (!account || account.deleted) {
+      issues.push({ section, title, reason: `счёта «${name}» нет — заведите его или добавьте в раздел «accounts»` })
+      continue
+    }
+    const currency = findCurrency(data.currencies, account.currency)
+    if (!currency) {
+      issues.push({ section, title, reason: `валюты ${account.currency} нет в справочнике` })
+      continue
+    }
+
+    const from = dayOf(record.from)
+    const to = dayOf(record.to)
+    if (!from || !to) {
+      issues.push({ section, title, reason: 'нет границ периода выписки ("from" и "to"), ГГГГ-ММ-ДД' })
+      continue
+    }
+    if (from > to) {
+      issues.push({ section, title, reason: `период кончается раньше, чем начинается: ${formatDate(from)} — ${formatDate(to)}` })
+      continue
+    }
+
+    const opening = signedAmount(record.opening, currency.decimals)
+    const closing = signedAmount(record.closing, currency.decimals)
+    const income = signedAmount(record.income, currency.decimals)
+    const expense = signedAmount(record.expense, currency.decimals)
+
+    const byBalance = opening !== null && closing !== null
+    const byTurnover = income !== null && expense !== null
+    if (!byBalance && !byTurnover) {
+      issues.push({
+        section,
+        title,
+        reason:
+          'нечем сверять: нужна пара «opening» и «closing» либо пара «income» и «expense». ' +
+          'Возьмите эти числа из выписки — они в ней есть',
+      })
+      continue
+    }
+
+    checks.push({
+      accountId: account.id,
+      accountName: account.name,
+      currency: account.currency,
+      from,
+      to,
+      opening,
+      closing,
+      income,
+      expense,
+    })
+  }
+
+  return { checks, issues }
+}
+
+/** Сумма из файла со знаком: остаток бывает и отрицательным. Пусто — null. */
+function signedAmount(value: unknown, decimals: number): number | null {
+  if (absent(value)) return null
+  const text = String(value).trim()
+  const negative = text.startsWith('-')
+  const parsed = parseAmount(negative ? text.slice(1) : text, decimals)
+  if (parsed === null) return null
+  return negative ? -parsed.amount : parsed.amount
+}
+
+/** Приход и расход по счёту за период — по всем записям, где счёт участвует. */
+function turnoverOn(entries: readonly Entry[], check: Check): { income: number; expense: number } {
+  let income = 0
+  let expense = 0
+
+  for (const entry of entries) {
+    if (entry.deleted || !entry.date) continue
+    if (entry.date < check.from || entry.date > check.to) continue
+
+    if (entry.accountId === check.accountId) {
+      if (entry.kind === 'income') income += entry.money.amount
+      else expense += entry.money.amount
+    } else if (entry.kind === 'transfer' && entry.toAccountId === check.accountId) {
+      income += entry.money.amount
+    }
+  }
+
+  return { income, expense }
+}
+
+/**
+ * Правило допуска (Р-16).
+ *
+ * Расход и доход с датой ложатся только на счёт, сверка которого есть
+ * и сошлась. Перевод проходит, если сошлась сверка **хотя бы одной** из его
+ * сторон: у наличных выписки нет и не будет, а движение наличных как раз
+ * и объясняет остаток банка. По «Месяцу» считаются расход и доход — их
+ * правило держит жёстко.
+ *
+ * Итоги периодов сверка не трогает: у них нет даты, и переносятся они
+ * не выпиской (Р-14).
+ */
+export function applyChecks(
+  checks: readonly Check[],
+  incoming: readonly Entry[],
+  data: LedgerImportData,
+): { kept: Entry[]; issues: Issue[] } {
+  const section = checksImportSpec.section
+  const issues: Issue[] = []
+  const passed = new Set<string>()
+
+  // Считается по всему, что окажется в базе: уже лежащие записи плюс новые.
+  // Иначе повторная загрузка той же выписки не сошлась бы ни разу — её
+  // записи пропускаются как повторы и в `incoming` не попадают.
+  const all = [...data.entries, ...incoming]
+
+  for (const check of checks) {
+    const currency = findCurrency(data.currencies, check.currency)
+    const money = (amount: number) => formatMoney({ amount: Math.abs(amount), currency: check.currency }, currency)
+    const actual = turnoverOn(all, check)
+    const wrong: string[] = []
+
+    if (check.opening !== null && check.closing !== null) {
+      const expected = check.opening + actual.income - actual.expense
+      const difference = expected - check.closing
+      if (difference !== 0) {
+        wrong.push(
+          `по записям на конец выходит ${money(expected)}, а выписка называет ${money(check.closing)} — ` +
+            `${difference > 0 ? 'лишних' : 'не хватает'} ${money(difference)}`,
+        )
+      }
+    }
+    if (check.income !== null && check.expense !== null) {
+      if (actual.income !== check.income) {
+        wrong.push(`пришло по записям ${money(actual.income)}, а выписка называет ${money(check.income)}`)
+      }
+      if (actual.expense !== check.expense) {
+        wrong.push(`ушло по записям ${money(actual.expense)}, а выписка называет ${money(check.expense)}`)
+      }
+    }
+
+    if (wrong.length === 0) {
+      passed.add(check.accountId)
+      continue
+    }
+    issues.push({
+      section,
+      title: check.accountName,
+      reason:
+        `сверка за ${formatDate(check.from)} — ${formatDate(check.to)} не сошлась: ${wrong.join('; ')}. ` +
+        'Ни одна операция этого счёта не загружена: скорее всего, беседа перенесла не все строки выписки',
+    })
+  }
+
+  const kept: Entry[] = []
+  const dropped = new Map<string, number>()
+  const checked = new Set(checks.map((each) => each.accountId))
+
+  for (const entry of incoming) {
+    if (!entry.date || allowed(entry, passed)) {
+      kept.push(entry)
+      continue
+    }
+    dropped.set(entry.accountId, (dropped.get(entry.accountId) ?? 0) + 1)
+  }
+
+  for (const [accountId, count] of dropped) {
+    // Счёт с несошедшейся сверкой уже назван выше — второй раз не называем.
+    if (checked.has(accountId)) continue
+    const account = data.accounts.find((each) => each.id === accountId)
+    issues.push({
+      section,
+      title: account?.name ?? accountId,
+      reason:
+        `сверки по этому счёту нет — ${count} ${plural(count, FORMS.entry)} не загружено. ` +
+        'Беседа обязана перенести из выписки начальный и конечный остаток или обороты за период',
+    })
+  }
+
+  return { kept, issues }
+}
+
+function allowed(entry: Entry, passed: ReadonlySet<string>): boolean {
+  if (entry.kind === 'transfer') {
+    return passed.has(entry.accountId) || (entry.toAccountId !== undefined && passed.has(entry.toAccountId))
+  }
+  return passed.has(entry.accountId)
+}
+
 /** Все разделы учёта по порядку разбора: справочники раньше записей. */
 export const LEDGER_IMPORT_SPECS: readonly ImportSpec[] = [
   currenciesImportSpec,
@@ -817,6 +1089,7 @@ export const LEDGER_IMPORT_SPECS: readonly ImportSpec[] = [
   categoriesImportSpec,
   ratesImportSpec,
   entriesImportSpec,
+  checksImportSpec,
 ]
 
 /**

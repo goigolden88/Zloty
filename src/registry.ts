@@ -28,10 +28,14 @@ import { lastDayOn } from './modules/ledger/entries.ts'
 import { entryFeed, entryMarkdown, ENTRY_KIND, type FeedData } from './modules/ledger/feed.ts'
 import {
   accountsImportSpec,
+  applyChecks,
   categoriesImportSpec,
+  checksImportSpec,
   currenciesImportSpec,
+  ENTRY_FORMS,
   entriesImportSpec,
   importAccounts,
+  importChecks,
   importCategories,
   importCurrencies,
   importEntries,
@@ -147,7 +151,8 @@ export function planImport(text: string, data: Data, ctx: ImportContext): Plan {
 
   // Разделы, которых нет: молчать о них нельзя — человек мог написать
   // «operations» вместо «entries» и не понять, почему ничего не загрузилось.
-  const known = new Set(LEDGER.map((section) => section.spec.section))
+  // Сверка разбирается не здесь, а после записей: ей нужно то, что они дали.
+  const known = new Set([...LEDGER.map((section) => section.spec.section), checksImportSpec.section])
   for (const section of Object.keys(sections)) {
     if (known.has(section)) continue
     results.push({
@@ -158,8 +163,31 @@ export function planImport(text: string, data: Data, ctx: ImportContext): Plan {
     })
   }
 
-  const plan = mergeResults(results)
+  const plan = withChecks(mergeResults(results), sections[checksImportSpec.section], data)
   return withReplacedTotals(plan, data, ctx.now)
+}
+
+/**
+ * Сверка выписки (Р-16): счёт, чьи числа не сошлись с тем, что говорит о себе
+ * сама выписка, записей не получает. Идёт до замены итогов периодов — иначе
+ * итог заменили бы операции, которые в базу не попадут.
+ */
+function withChecks(plan: Plan, raw: unknown, data: Data): Plan {
+  const incoming = plan.writes.entries ?? []
+  if (incoming.length === 0) return plan
+
+  const ledger = ledgerData(data)
+  const { checks, issues } = importChecks(raw ?? [], ledger)
+  const { kept, issues: refused } = applyChecks(checks, incoming, ledger)
+
+  return {
+    ...plan,
+    writes: { ...plan.writes, entries: kept },
+    added: plan.added.map((each) =>
+      each.forms === ENTRY_FORMS ? { ...each, count: each.count - (incoming.length - kept.length) } : each,
+    ).filter((each) => each.count > 0),
+    issues: [...plan.issues, ...issues, ...refused],
+  }
 }
 
 /**

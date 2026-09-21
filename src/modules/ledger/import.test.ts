@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { Account, Category, Currency, Entry } from '../../app/model.ts'
 import type { ImportContext } from '../../shared/core/importing.ts'
 import {
+  applyChecks,
   importAccounts,
   importCategories,
+  importChecks,
   importCurrencies,
   importEntries,
   importRates,
@@ -435,5 +437,121 @@ describe('промпт знает справочники и загруженно
 
   it('счёта истории нет — и строки о нём нет', () => {
     expect(ledgerPromptNotes(base({ accounts: [BANK] }), new Map())).not.toContain('Счёт истории')
+  })
+})
+
+describe('сверка выписки (Р-16)', () => {
+  const check = { account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', opening: 1000, closing: 650.1 }
+
+  function entry(over: Partial<Entry> = {}): Entry {
+    return {
+      id: `e-${++counter}`,
+      updatedAt: AT,
+      kind: 'expense',
+      accountId: BANK.id,
+      money: { amount: 34990, currency: 'RUB' },
+      date: '2026-09-14',
+      categoryId: FOOD.id,
+      ...over,
+    }
+  }
+
+  it('остатки сошлись — записи проходят', () => {
+    const { checks, issues } = importChecks([check], base())
+    expect(issues).toHaveLength(0)
+
+    const incoming = [entry()]
+    const plan = applyChecks(checks, incoming, base())
+    expect(plan.kept).toHaveLength(1)
+    expect(plan.issues).toHaveLength(0)
+  })
+
+  it('не хватает операций — ни одна запись счёта не загружена, разница названа', () => {
+    const { checks } = importChecks([check], base())
+    // Выписка говорит: ушло 349,90. Беседа принесла только половину.
+    const plan = applyChecks(checks, [entry({ money: { amount: 17495, currency: 'RUB' } })], base())
+
+    expect(plan.kept).toHaveLength(0)
+    expect(plan.issues[0]?.reason).toContain('не сошлась')
+    expect(plan.issues[0]?.reason).toContain('174,95')
+    expect(plan.issues[0]?.title).toBe('Синий банк')
+  })
+
+  it('сверки по счёту нет — записи не загружаются, и это сказано отдельно', () => {
+    const plan = applyChecks([], [entry(), entry()], base())
+    expect(plan.kept).toHaveLength(0)
+    expect(plan.issues[0]?.reason).toContain('сверки по этому счёту нет')
+    expect(plan.issues[0]?.reason).toContain('2 записи')
+  })
+
+  it('обороты сверяются отдельно от остатков', () => {
+    const { checks } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', income: 0, expense: 349.9 }],
+      base(),
+    )
+    expect(applyChecks(checks, [entry()], base()).kept).toHaveLength(1)
+
+    const { checks: wrong } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', income: 0, expense: 500 }],
+      base(),
+    )
+    expect(applyChecks(wrong, [entry()], base()).issues[0]?.reason).toContain('ушло по записям')
+  })
+
+  it('уже лежащие в базе записи считаются вместе с новыми: повторная загрузка сходится', () => {
+    const was = entry()
+    const { checks } = importChecks([check], base())
+    // Вся выписка уже в базе, нового не пришло ничего, кроме одной записи
+    // с другого счёта, — сверка счёта всё равно должна сойтись.
+    const plan = applyChecks(checks, [], base({ entries: [was] }))
+    expect(plan.issues).toHaveLength(0)
+  })
+
+  it('перевод проходит, если сошлась сверка хотя бы одной стороны', () => {
+    const { checks } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', income: 349.9, expense: 0 }],
+      base(),
+    )
+    // Внесение наличных: со стороны «Наличных» выписки нет и не будет.
+    const cash = entry({ kind: 'transfer', accountId: CASH.id, toAccountId: BANK.id, categoryId: undefined })
+    const plan = applyChecks(checks, [cash], base())
+    expect(plan.kept).toHaveLength(1)
+  })
+
+  it('итог за период сверка не трогает: у него нет даты', () => {
+    const total = entry({ date: undefined, period: { from: '2026-08-01', to: '2026-09-01' } })
+    expect(applyChecks([], [total], base()).kept).toHaveLength(1)
+  })
+
+  it('строка без пары чисел — не сверка, и счёт остаётся непроверенным', () => {
+    const { checks, issues } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', closing: 650.1 }],
+      base(),
+    )
+    expect(checks).toHaveLength(0)
+    expect(issues[0]?.reason).toContain('нечем сверять')
+  })
+
+  it('счёт сверки наугад не заводится (Р-13)', () => {
+    const { checks, issues } = importChecks([{ ...check, account: 'Чужой банк' }], base())
+    expect(checks).toHaveLength(0)
+    expect(issues[0]?.reason).toContain('заведите его или добавьте в раздел')
+  })
+
+  it('отрицательный остаток — законное число', () => {
+    const { checks } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', opening: -100, closing: -449.9 }],
+      base(),
+    )
+    expect(applyChecks(checks, [entry()], base()).kept).toHaveLength(1)
+  })
+
+  it('операции вне периода выписки в сверку не входят', () => {
+    const { checks } = importChecks([check], base())
+    const outside = entry({ date: '2026-08-31' })
+    const inside = entry()
+    const plan = applyChecks(checks, [outside, inside], base())
+    expect(plan.issues).toHaveLength(0)
+    expect(plan.kept).toHaveLength(2)
   })
 })
