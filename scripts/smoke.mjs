@@ -452,6 +452,9 @@ async function scenario(profile) {
     format: 'zloty-import',
     version: 1,
     categories: [{ name: 'Транспорт', side: 'expense' }],
+    // Второй счёт: у наличных выписки нет и не будет — на них проверяется
+    // правило Р-16 «перевод проходит по сверке одной стороны».
+    accounts: [{ name: 'Наличные', currency: 'RUB', kind: 'savings' }],
     entries: [
       { kind: 'expense', account: 'Синий банк', amount: 120.5, date: '2026-09-18', category: 'Транспорт', bankText: 'МЕТРО 120.50' },
       { kind: 'income', account: 'Синий банк', amount: 30, date: '2026-09-18', category: 'Кэшбэк', bankText: 'КЭШБЭК' },
@@ -546,6 +549,33 @@ async function scenario(profile) {
     line(mismatch, 'не сошлась'),
   )
 
+  // Внесение наличных: сверки у «Наличных» нет и не будет, но движение
+  //    объясняет остаток банка — перевод проходит по сверке одной стороны.
+  const CASH_IN = JSON.stringify({
+    format: 'zloty-import',
+    version: 1,
+    entries: [
+      { kind: 'transfer', account: 'Наличные', toAccount: 'Синий банк', amount: 5000, date: '2026-09-20', bankText: 'ВНЕСЕНИЕ НАЛИЧНЫХ' },
+    ],
+    checks: [{ account: 'Синий банк', from: '2026-09-20', to: '2026-09-20', income: 5000, expense: 0 }],
+  })
+
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(CASH_IN)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  await act(`startsWith('button', 'Загрузить ').click();`)
+  await sleep(900)
+  const cash = await screen()
+  check(
+    'внесение наличных проходит по сверке одной стороны',
+    has(cash, 'Загружено записей'),
+    line(cash, 'Загружено записей'),
+  )
+
   // Промпт обязан знать мои счета и категории — иначе беседа разложит наугад.
   await act(`startsWith('.fold__btn', 'Как подготовить файл').click();`)
   await sleep(400)
@@ -554,6 +584,16 @@ async function scenario(profile) {
   const prompt = await screen()
   check('промпт знает мои счета', has(prompt, '«Синий банк» (RUB)'), line(prompt, 'Синий банк» (RUB)'))
   check('промпт знает мои категории', has(prompt, 'Расходные категории'), line(prompt, 'Расходные категории'))
+  check(
+    'промпт сам просит сверку, а не надеется на память человека',
+    has(prompt, 'напиши строку в разделе «checks»'),
+    line(prompt, 'разделе «checks»'),
+  )
+  check(
+    'и сам говорит, как разбирать несколько выписок',
+    has(prompt, 'Разбирай выписки по одной'),
+    line(prompt, 'Разбирай выписки по одной'),
+  )
 
   await go('/entries')
   const afterImport = await screen()

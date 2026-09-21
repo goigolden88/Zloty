@@ -555,3 +555,16 @@ describe('сверка выписки (Р-16)', () => {
     expect(plan.kept).toHaveLength(2)
   })
 })
+
+describe('промпт сам говорит, как разбирать несколько выписок (Р-16)', () => {
+  it('велит разбирать по одной и класть в один файл', () => {
+    const notes = ledgerPromptNotes(base(), new Map())
+    expect(notes).toContain('Разбирай выписки по одной')
+    expect(notes).toContain('клади их в один файл')
+  })
+
+  it('счёт один — про несколько выписок молчит', () => {
+    const notes = ledgerPromptNotes(base({ accounts: [BANK] }), new Map())
+    expect(notes).not.toContain('Разбирай выписки по одной')
+  })
+})
