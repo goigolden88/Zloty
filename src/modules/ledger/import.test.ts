@@ -14,7 +14,6 @@ import {
   ledgerPromptNotes,
   promptSamples,
   replacedTotals,
-  TRANSFER_MATCH_DAYS,
   type LedgerImportData,
 } from './import.ts'
 
@@ -213,37 +212,23 @@ describe('ключ импорта и повтор (Р-12, п. 4)', () => {
   })
 })
 
-describe('склейка встречных переводов (Р-12, п. 3)', () => {
-  const out = { kind: 'transfer', account: 'Синий банк', amount: 5000, date: '2026-09-15', bankText: 'Перевод' }
-  const back = { kind: 'transfer', account: 'Наличные', amount: 5000, date: '2026-09-15', bankText: 'Поступление' }
+describe('склейки встречных сторон нет (Р-19, отменяет Р-12, п. 3)', () => {
+  const out = { kind: 'transfer', account: 'Синий банк', toAccount: 'Наличные', amount: 5000, date: '2026-09-15', bankText: 'Туда' }
+  const backDay = { kind: 'transfer', account: 'Наличные', toAccount: 'Синий банк', amount: 5000, date: '2026-09-16', bankText: 'Обратно' }
 
-  it('две стороны одного перевода становятся одной записью', () => {
-    const plan = importEntries([out, back], base(), context())
-    expect(plan.writes.entries).toHaveLength(1)
-    expect(plan.writes.entries?.[0]?.toAccountId).toBe(CASH.id)
-  })
-
-  it('даты дальше допустимого не склеиваются: несклеенное остаётся видно', () => {
-    const far = { ...back, date: '2026-09-25' }
-    const plan = importEntries([out, far], base(), context())
+  it('деньги сходили туда и обратно — это два движения, а не одно', () => {
+    const plan = importEntries([out, backDay], base(), context())
     expect(plan.writes.entries).toHaveLength(2)
   })
 
-  it('на границе допустимого ещё склеивается', () => {
-    const edge = { ...back, date: '2026-09-18' }
-    expect(TRANSFER_MATCH_DAYS).toBe(3)
-    expect(importEntries([out, edge], base(), context()).writes.entries).toHaveLength(1)
+  it('и в тот же день — тоже два: догадываться приложение не берётся', () => {
+    const sameDay = { ...backDay, date: '2026-09-15' }
+    expect(importEntries([out, sameDay], base(), context()).writes.entries).toHaveLength(2)
   })
 
-  it('расход и доход той же суммы не склеиваются: склеиваются только помеченные переводом', () => {
-    const expense = { ...out, kind: 'expense', category: 'Продукты' }
-    const income = { ...back, kind: 'income', category: 'Продукты' }
-    expect(importEntries([expense, income], base(), context()).writes.entries).toHaveLength(2)
-  })
-
-  it('две стороны на одном счёте не склеиваются: это движение внутри счёта', () => {
-    const same = { ...back, account: 'Синий банк' }
-    expect(importEntries([out, same], base(), context()).writes.entries).toHaveLength(2)
+  it('сводка о склейке больше ничего не сообщает', () => {
+    const plan = importEntries([out, backDay], base(), context())
+    expect(plan.issues.some((each) => each.reason.includes('склеено'))).toBe(false)
   })
 })
 

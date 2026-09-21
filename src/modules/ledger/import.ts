@@ -18,13 +18,14 @@
  *   счёта, — и выдумать её нельзя. Счёт, которого нет в справочнике,
  *   называется с причиной; завести его умеет раздел `accounts`, где валюта
  *   сказана явно. Категория заводится: у неё выдумывать нечего.
- * — **Встречные стороны перевода склеиваются внутри одного файла** (Р-12,
- *   п. 3) — и только между записями, помеченными переводом. Несклеенное
- *   остаётся отдельной записью и называется числом, а не исчезает.
+ * — **Встречные стороны перевода не склеиваются** (Р-19, отменяет Р-12,
+ *   п. 3). Одно движение — одна запись, и пишет её беседа: она видит все
+ *   выписки сразу, а обе стороны описывают движение одинаково — `account`
+ *   откуда, `toAccount` куда. Склейка по догадке съедала настоящие записи.
  * — **Примеры выдуманные:** промпт уезжает к тому, с кем идёт беседа.
  */
 
-import { daysBetween, formatDate, plural } from '../../shared/core/dates.ts'
+import { formatDate, plural } from '../../shared/core/dates.ts'
 import {
   absent,
   dayOf,
@@ -41,9 +42,6 @@ import {
 import type { Account, Category, Currency, Entry, Rate, Recurring, StoreRecord } from '../../app/model.ts'
 import { findCurrency, formatMoney, parseAmount, suggestDecimals } from '../money/money.ts'
 import { createAccount, createCategory, createCurrency, findByName, sortedCurrencies } from './ledger.ts'
-
-/** Насколько далеко расходятся даты у двух сторон одного перевода (Р-12, п. 3). */
-export const TRANSFER_MATCH_DAYS = 3
 
 type Plan = ImportPlan<StoreRecord>
 
@@ -530,7 +528,11 @@ export function importEntries(raw: unknown, data: LedgerImportData, ctx: ImportC
     })
   }
 
-  const { kept, merged } = mergeTransfers(drafts)
+  // Склейки встречных сторон здесь нет и больше не будет (Р-19): одно
+  // движение — одна запись, и делает её беседа, которая видит все выписки
+  // сразу. Ошибётся — сверка назовёт завышенный приход суммой (Р-16),
+  // а не съест запись молча.
+  const kept = drafts
 
   // Номер среди одинаковых считается по месту в файле, а не по базе: иначе
   // та же выписка, загруженная второй раз, получила бы новые номера (Р-12).
@@ -562,14 +564,6 @@ export function importEntries(raw: unknown, data: LedgerImportData, ctx: ImportC
       reason: `у ${rounded} ${plural(rounded, FORMS.entry)} было больше знаков после запятой, чем у валюты счёта — сумма округлена`,
     })
   }
-  if (merged > 0) {
-    issues.push({
-      section,
-      title: 'переводы',
-      reason: `склеено встречных сторон перевода: ${merged}. Несклеенные остались отдельными записями`,
-    })
-  }
-
   const added = [
     { count: created.length, forms: FORMS.entry },
     { count: createdCategories.length, forms: FORMS.category },
@@ -645,57 +639,6 @@ function baseKey(accountId: string, entry: Entry): string {
   const day = entry.date ?? entry.period?.to ?? ''
   const text = (entry.bankText ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru')
   return [accountId, day, entry.time ?? '', String(entry.money.amount), text].join(':')
-}
-
-/**
- * Встречные стороны одного перевода — в одну запись (Р-12, п. 3).
- *
- * Склеиваются только записи, обе помеченные переводом, с одинаковой суммой,
- * на разных счетах и с датами не дальше `TRANSFER_MATCH_DAYS` друг от друга.
- * Всё остальное остаётся как есть: склейка, которая ошиблась, съела бы
- * настоящий доход.
- */
-function mergeTransfers(drafts: readonly Draft[]): { kept: Draft[]; merged: number } {
-  const kept: Draft[] = []
-  const used = new Set<number>()
-  let merged = 0
-
-  drafts.forEach((draft, at) => {
-    if (used.has(at)) return
-    const one = draft.entry
-    if (one.kind !== 'transfer' || !one.date) {
-      kept.push(draft)
-      return
-    }
-
-    const pair = drafts.findIndex((other, index) => {
-      if (index <= at || used.has(index)) return false
-      const two = other.entry
-      return (
-        two.kind === 'transfer' &&
-        Boolean(two.date) &&
-        two.accountId !== one.accountId &&
-        two.money.amount === one.money.amount &&
-        two.money.currency === one.money.currency &&
-        Math.abs(daysBetween(one.date ?? '', two.date ?? '')) <= TRANSFER_MATCH_DAYS
-      )
-    })
-
-    if (pair === -1) {
-      kept.push(draft)
-      return
-    }
-
-    used.add(pair)
-    merged += 1
-    const other = drafts[pair]
-    kept.push({
-      ...draft,
-      entry: { ...one, toAccountId: one.toAccountId ?? other?.entry.accountId },
-    })
-  })
-
-  return { kept, merged }
 }
 
 // ─── Промпт ────────────────────────────────────────────────────────────────
