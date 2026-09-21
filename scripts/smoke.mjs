@@ -549,6 +549,34 @@ async function scenario(profile) {
     line(mismatch, 'не сошлась'),
   )
 
+  // Движения внутри счёта в базу не идут (Р-12, п. 1), но остаток выписки
+  //    меняют: она приходит на один договор, а счёт — банк целиком. Беседа
+  //    объявляет их суммой, и только тогда сверка сходится (Р-17).
+  const SKIPPED = JSON.stringify({
+    format: 'zloty-import',
+    version: 1,
+    entries: [
+      { kind: 'expense', account: 'Синий банк', amount: 40, date: '2026-09-19', category: 'Транспорт', bankText: 'ТРОЛЛЕЙБУС 40.00' },
+    ],
+    checks: [{ account: 'Синий банк', from: '2026-09-19', to: '2026-09-19', opening: 3000, closing: 460, skippedOut: 2500 }],
+  })
+
+  await act(`
+    const field = document.querySelector('.import__text');
+    set(field, ${JSON.stringify(SKIPPED)});
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  await act(`startsWith('button', 'Загрузить ').click();`)
+  await sleep(900)
+  const skipped = await screen()
+  check(
+    'объявленные движения внутри счёта сводят сверку',
+    has(skipped, 'Загружено записей'),
+    line(skipped, 'Загружено записей'),
+  )
+
   // Счёт, заведённый этим же файлом, обязан называться по имени: сверка
   //    смотрит в справочники после разбора, а не до него. Иначе человек
   //    видит в отказе id вместо названия.

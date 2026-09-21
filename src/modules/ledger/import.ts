@@ -320,7 +320,9 @@ export const entriesImportSpec: ImportSpec = {
     'операции выписки и итоги периодов. Одна строка выписки — одна запись. Перенеси все строки до одной: ' +
     'пропущенная операция — это не «мелочь», а неверный итог месяца. Перевод между двумя моими ' +
     'счетами — одна запись "transfer", а не две. Движения внутри одного счёта (с карты на накопительный ' +
-    'того же банка) не пиши вовсе: они ничего не меняют.\n' +
+    'того же банка) не пиши вовсе: остатка банка они не меняют. Но их суммы назови в разделе «checks», ' +
+    'полями "skippedIn" и "skippedOut": выписка-то приходит на один договор, и его остаток эти движения ' +
+    'меняют — без их сумм сверка не сойдётся.\n' +
     'Что считать переводом, а что доходом и расходом:\n' +
     '  - внесение и снятие наличных — это "transfer" со счётом «Наличные» с одной стороны, а не доход и не расход;\n' +
     '  - перевод другому человеку — это "expense" с категорией, а не "transfer". Перевод между своими ' +
@@ -873,7 +875,12 @@ export const checksImportSpec: ImportSpec = {
     '"from" и "to" — начало и конец периода выписки, ГГГГ-ММ-ДД. Обязательно',
     '"opening" и "closing" — остаток на начало и на конец периода, как их называет сама выписка',
     '"income" и "expense" — обороты за период: сколько всего пришло и сколько ушло, если выписка их называет',
-    'Хотя бы одна пара обязательна — «opening» с «closing» или «income» с «expense». Есть обе — пиши обе',
+    'Хотя бы одна пара обязательна — «opening» с «closing» или «income» с «expense». Есть обе — пиши обе: ' +
+      'сверяю по остаткам, обороты беру, только если остатков нет',
+    '"skippedIn" и "skippedOut" — сколько всего пришло и ушло теми строками, которые ты НЕ переносил ' +
+      'в «entries»: движения между моими договорами и картами внутри этого же банка. Их не надо писать ' +
+      'записями, но их суммы назови обязательно — выписка-то у одного договора, и его остаток они меняют. ' +
+      'Таких строк не было — не пиши',
   ],
   example: [
     {
@@ -884,6 +891,8 @@ export const checksImportSpec: ImportSpec = {
       closing: 96.04,
       income: 600,
       expense: 884.98,
+      skippedIn: 0,
+      skippedOut: 5000,
     },
   ],
 }
@@ -899,6 +908,9 @@ export type Check = {
   closing: number | null
   income: number | null
   expense: number | null
+  /** Движения внутри счёта, которые беседа намеренно не переносила (Р-12, п. 1; Р-17). */
+  skippedIn: number
+  skippedOut: number
 }
 
 /**
@@ -969,6 +981,8 @@ export function importChecks(raw: unknown, data: LedgerImportData): { checks: Ch
       closing,
       income,
       expense,
+      skippedIn: signedAmount(record.skippedIn, currency.decimals) ?? 0,
+      skippedOut: signedAmount(record.skippedOut, currency.decimals) ?? 0,
     })
   }
 
@@ -1034,7 +1048,14 @@ export function applyChecks(
   for (const check of checks) {
     const currency = findCurrency(data.currencies, check.currency)
     const money = (amount: number) => formatMoney({ amount: Math.abs(amount), currency: check.currency }, currency)
-    const actual = turnoverOn(all, check)
+    const counted = turnoverOn(all, check)
+    // Движения внутри счёта в базу не идут (Р-12, п. 1), но остаток выписки
+    // меняют: выписка у одного договора, а счёт — банк целиком. Беседа
+    // называет их суммой, и здесь они встают на своё место (Р-17).
+    const actual = {
+      income: counted.income + check.skippedIn,
+      expense: counted.expense + check.skippedOut,
+    }
     const wrong: string[] = []
 
     if (check.opening !== null && check.closing !== null) {
@@ -1046,14 +1067,22 @@ export function applyChecks(
             `${difference > 0 ? 'лишних' : 'не хватает'} ${money(difference)}`,
         )
       }
-    }
-    if (check.income !== null && check.expense !== null) {
+    } else if (check.income !== null && check.expense !== null) {
+      // Обороты — только когда остатков нет: банки считают их по-разному,
+      // например показывают кэшбэк отдельной строкой мимо «поступлений».
       if (actual.income !== check.income) {
         wrong.push(`пришло по записям ${money(actual.income)}, а выписка называет ${money(check.income)}`)
       }
       if (actual.expense !== check.expense) {
         wrong.push(`ушло по записям ${money(actual.expense)}, а выписка называет ${money(check.expense)}`)
       }
+    }
+
+    if (wrong.length > 0 && check.skippedIn === 0 && check.skippedOut === 0) {
+      wrong.push(
+        'движений внутри счёта беседа не объявила вовсе — если они были, их суммы нужны ' +
+          'в "skippedIn" и "skippedOut"',
+      )
     }
 
     if (wrong.length === 0) {
@@ -1072,25 +1101,47 @@ export function applyChecks(
   const kept: Entry[] = []
   const dropped = new Map<string, number>()
   const checked = new Set(checks.map((each) => each.accountId))
+  const droppedTransfers: Entry[] = []
 
   for (const entry of incoming) {
     if (!entry.date || allowed(entry, passed)) {
       kept.push(entry)
       continue
     }
-    dropped.set(entry.accountId, (dropped.get(entry.accountId) ?? 0) + 1)
+    if (entry.kind === 'transfer') droppedTransfers.push(entry)
+    else dropped.set(entry.accountId, (dropped.get(entry.accountId) ?? 0) + 1)
   }
+
+  const nameOf = (id: string | undefined) =>
+    id === undefined ? null : (data.accounts.find((each) => each.id === id)?.name ?? id)
 
   for (const [accountId, count] of dropped) {
     // Счёт с несошедшейся сверкой уже назван выше — второй раз не называем.
     if (checked.has(accountId)) continue
-    const account = data.accounts.find((each) => each.id === accountId)
     issues.push({
       section,
-      title: account?.name ?? accountId,
+      title: nameOf(accountId) ?? accountId,
       reason:
         `сверки по этому счёту нет — ${count} ${plural(count, FORMS.entry)} не загружено. ` +
         'Беседа обязана перенести из выписки начальный и конечный остаток или обороты за период',
+    })
+  }
+
+  // У перевода две стороны, и причина отказа — обе сразу. Сказать про счёт
+  // наличных «сверки нет» значило бы послать человека заводить сверку,
+  // которой у наличных не будет никогда.
+  if (droppedTransfers.length > 0) {
+    const sides = new Set<string>()
+    for (const entry of droppedTransfers) {
+      for (const name of [nameOf(entry.accountId), nameOf(entry.toAccountId)]) if (name) sides.add(name)
+    }
+    issues.push({
+      section,
+      title: 'переводы',
+      reason:
+        `${droppedTransfers.length} ${plural(droppedTransfers.length, FORMS.entry)} не загружено: ` +
+        `сверка не сошлась ни по одной из сторон — ${[...sides].join(', ')}. ` +
+        'Переводу довольно одной сошедшейся стороны, так что они приедут вместе со счётом, который сойдётся',
     })
   }
 

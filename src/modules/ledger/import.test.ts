@@ -585,3 +585,69 @@ describe('промпт объясняет направление перевод�
     expect((incoming as { account?: string }).account).not.toBe('Синий банк')
   })
 })
+
+describe('движения внутри счёта объявляются суммой (Р-17)', () => {
+  function spend(amount: number): Entry {
+    return {
+      id: `e-${++counter}`,
+      updatedAt: AT,
+      kind: 'expense',
+      accountId: BANK.id,
+      money: { amount, currency: 'RUB' },
+      date: '2026-09-14',
+      categoryId: FOOD.id,
+    }
+  }
+
+  it('объявленное пропущенное встаёт в остаток, и сверка сходится', () => {
+    // Ушло 349,90 записями и ещё 5 000 переводом на свой же договор.
+    const { checks } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', opening: 6000, closing: 650.1, skippedOut: 5000 }],
+      base(),
+    )
+    expect(applyChecks(checks, [spend(34990)], base()).kept).toHaveLength(1)
+  })
+
+  it('не сошлось, а пропущенное не объявлено — в причине сказано, чего ждут', () => {
+    const { checks } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', opening: 6000, closing: 650.1 }],
+      base(),
+    )
+    const reason = applyChecks(checks, [spend(34990)], base()).issues[0]?.reason ?? ''
+    expect(reason).toContain('движений внутри счёта беседа не объявила')
+    expect(reason).toContain('skippedIn')
+  })
+
+  it('есть остатки — обороты не проверяются: банки считают их по-разному', () => {
+    // Остатки сходятся, а оборот прихода выписка называет меньше на кэшбэк.
+    const { checks } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', opening: 1000, closing: 650.1, income: 0, expense: 349.9 }],
+      base(),
+    )
+    const cashback: Entry = { ...spend(0), kind: 'income', money: { amount: 0, currency: 'RUB' } }
+    expect(applyChecks(checks, [spend(34990), cashback], base()).issues).toHaveLength(0)
+  })
+
+  it('перевод без сошедшихся сторон назван переводом, а не «сверки нет»', () => {
+    const cash: Entry = {
+      id: 'e-t',
+      updatedAt: AT,
+      kind: 'transfer',
+      accountId: CASH.id,
+      toAccountId: BANK.id,
+      money: { amount: 500000, currency: 'RUB' },
+      date: '2026-09-14',
+    }
+    // Сверка «Синего банка» не сойдётся, у «Наличных» её нет и не будет.
+    const { checks } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', opening: 0, closing: 999 }],
+      base(),
+    )
+    const plan = applyChecks(checks, [cash], base())
+    expect(plan.kept).toHaveLength(0)
+    const transfers = plan.issues.find((each) => each.title === 'переводы')
+    expect(transfers?.reason).toContain('ни по одной из сторон')
+    expect(transfers?.reason).toContain('Наличные')
+    expect(plan.issues.some((each) => each.title === 'Наличные')).toBe(false)
+  })
+})
