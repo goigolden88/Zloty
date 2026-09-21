@@ -21,7 +21,7 @@
  * — **Обычный месяц — без особых трат** (Р-05, Р-07).
  */
 
-import { daysBetween } from '../../shared/core/dates.ts'
+import { daysBetween, lastDayOf, periodDays } from '../../shared/core/dates.ts'
 import type { Currency, Entry, Money, Rate } from '../../app/model.ts'
 import { convert } from '../money/rates.ts'
 
@@ -122,6 +122,27 @@ function totalsTouching(entries: readonly Entry[], month: string): Entry[] {
   return entries.filter((each) => !each.deleted && each.period && each.period.from <= to && from <= each.period.to)
 }
 
+/**
+ * Сколько дней месяца накрыты итогами периодов по расходу — объединением,
+ * а не суммой: два периода могут задевать один и тот же день (Р-20).
+ *
+ * Считаются только расходные итоги: по ним и решается, известен ли расход
+ * месяца. Итог по доходу расход месяца не прячет.
+ */
+export function daysCoveredBy(totals: readonly Entry[], month: string): number {
+  const days = new Set<string>()
+
+  for (const total of totals) {
+    const period = total.period
+    if (!period || total.kind !== 'expense') continue
+    for (const day of periodDays({ from: period.from, to: period.to })) {
+      if (day.startsWith(`${month}-`)) days.add(day)
+    }
+  }
+
+  return days.size
+}
+
 // ─── Отчёт месяца ──────────────────────────────────────────────────────────
 
 export type MonthReport = {
@@ -144,6 +165,9 @@ export type MonthReport = {
   transfers: number
   /** Итоги периодов, задевающие месяц: месяц называет их, а не считает. */
   periodTotals: Entry[]
+  /** Сколько дней месяца накрыты итогами по расходу и сколько дней в месяце (Р-20). */
+  coveredDays: number
+  monthDays: number
 }
 
 /**
@@ -172,7 +196,13 @@ export function monthReport(data: MonthData, month: string): MonthReport {
   // его из дохода нельзя. Иначе отложенным окажется весь доход.
   // Доход не внесён — отложенного тоже не существует: ноль здесь означал бы
   // «ничего не отложено», а правда в том, что считать не из чего (Р-07).
-  const covered = periodTotals.some((each) => each.kind === 'expense')
+  const monthDays = daysBetween(`${month}-01`, lastDayOf(month)) + 1
+  const coveredDays = daysCoveredBy(periodTotals, month)
+  // Период «владеет» месяцем по большинству дней (Р-20). Край периода,
+  // заходящий в соседний месяц на день-другой, месяц не забирает: иначе
+  // первый же месяц с настоящими выписками не отвечает на главный вопрос
+  // из-за одного дня.
+  const covered = coveredDays * 2 > monthDays
   const savedProblem: SavedProblem = covered ? 'covered' : income.entries === 0 ? 'no-income' : null
 
   const saved = savedProblem === null ? income.amount - expense.amount : null
@@ -189,6 +219,8 @@ export function monthReport(data: MonthData, month: string): MonthReport {
     savingsRate,
     transfers: operations.filter((each) => each.kind === 'transfer').length,
     periodTotals,
+    coveredDays,
+    monthDays,
   }
 }
 

@@ -288,3 +288,55 @@ describe('столбики по месяцам', () => {
     ])
   })
 })
+
+describe('период владеет месяцем по большинству дней (Р-20)', () => {
+  const edge = [
+    // Последний период прежней таблицы кончается первым сентября:
+    // в сентябрь он заходит одним днём из тридцати.
+    entry({ kind: 'expense', amount: 4155900, period: { from: '2026-08-01', to: '2026-09-01' } }),
+    entry({ kind: 'expense', amount: 4409016, date: '2026-09-10', categoryId: 'food' }),
+    entry({ kind: 'income', amount: 395200, date: '2026-09-02' }),
+  ]
+
+  it('край периода месяц не забирает: отложенное считается', () => {
+    const report = monthReport(data(edge), '2026-09')
+    expect(report.savedProblem).toBeNull()
+    expect(report.saved).toBe(395200 - 4409016)
+  })
+
+  it('и сколько дней всё-таки задето — названо числом', () => {
+    const report = monthReport(data(edge), '2026-09')
+    expect(report.coveredDays).toBe(1)
+    expect(report.monthDays).toBe(30)
+  })
+
+  it('август тот же период забирает целиком', () => {
+    const report = monthReport(data(edge), '2026-08')
+    expect(report.coveredDays).toBe(31)
+    expect(report.savedProblem).toBe('covered')
+  })
+
+  it('ровно половина месяца — ещё не большинство', () => {
+    const half = [entry({ kind: 'expense', amount: 100, period: { from: '2026-09-01', to: '2026-09-15' } })]
+    expect(monthReport(data(half), '2026-09').coveredDays).toBe(15)
+    expect(monthReport(data(half), '2026-09').savedProblem).not.toBe('covered')
+  })
+
+  it('на день больше половины — уже большинство', () => {
+    const most = [entry({ kind: 'expense', amount: 100, period: { from: '2026-09-01', to: '2026-09-16' } })]
+    expect(monthReport(data(most), '2026-09').savedProblem).toBe('covered')
+  })
+
+  it('два периода, задевающие одни и те же дни, дважды их не считают', () => {
+    const both = [
+      entry({ kind: 'expense', amount: 100, period: { from: '2026-09-01', to: '2026-09-10' } }),
+      entry({ kind: 'expense', amount: 200, period: { from: '2026-09-01', to: '2026-09-10' }, special: true }),
+    ]
+    expect(monthReport(data(both), '2026-09').coveredDays).toBe(10)
+  })
+
+  it('итог по доходу расход месяца не прячет', () => {
+    const income = [entry({ kind: 'income', amount: 100, period: { from: '2026-09-01', to: '2026-09-30' } })]
+    expect(monthReport(data(income), '2026-09').coveredDays).toBe(0)
+  })
+})

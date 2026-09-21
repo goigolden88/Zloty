@@ -342,9 +342,19 @@ function MissingNote({ list }: { list: readonly Missing[] }) {
 function PeriodsNote({ report, show }: { report: ReturnType<typeof monthReport>; show: (amount: number) => string }) {
   if (report.periodTotals.length === 0) return null
 
+  // Сколько именно дней месяца лежит в периодах — то самое основание, без
+  // которого «частью покрыт» ничего не говорит: один день это или двадцать
+  // (Р-07, Р-20).
+  const days = report.coveredDays
+  const head =
+    days === 0
+      ? 'Итоги за период задевают этот месяц, но не его дни — их числа в месяц не входят:'
+      : `${days} ${plural(days, ['день', 'дня', 'дней'])} этого месяца из ${report.monthDays} записаны ` +
+        'итогами за период — их числа в месяц не входят, и за эти дни расход здесь не учтён:'
+
   return (
     <div className="panel">
-      <p>Этот месяц частью покрыт итогами за период — их числа в месяц не входят:</p>
+      <p>{head}</p>
       <ul className="plain">
         {report.periodTotals.map((total) => (
           <li key={total.id} className="muted">

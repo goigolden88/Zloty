@@ -375,7 +375,9 @@ function Periods({ list, ledger }: { list: Entry[]; ledger: LedgerData }) {
   if (list.length === 0) return null
 
   return (
-    <Fold id="entries:periods" title="Этот месяц покрыт итогами периодов" summary={<span className="muted">{list.length}</span>}>
+    // «Покрыт» — слово неверное: период, заходящий в месяц одним днём,
+    // его не покрывает (Р-20). «Задевают» верно в обоих случаях.
+    <Fold id="entries:periods" title="Итоги периодов, задевающие этот месяц" summary={<span className="muted">{list.length}</span>}>
       <p className="muted">
         Итог периода по месяцам не дробится: он записан целиком за свой промежуток, а не за этот месяц.
         Сравнивать такие промежутки между собой будет экран «Месяц» — расходом в день.
