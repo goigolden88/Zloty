@@ -323,6 +323,10 @@ export const entriesImportSpec: ImportSpec = {
     'того же банка) не пиши вовсе: остатка банка они не меняют. Но их суммы назови в разделе «checks», ' +
     'полями "skippedIn" и "skippedOut": выписка-то приходит на один договор, и его остаток эти движения ' +
     'меняют — без их сумм сверка не сойдётся.\n' +
+    'Считай их в обе стороны. Ушедшее с договора и пришедшее на него — одно и то же движение, ' +
+    'просто с разных сторон: «перевод на договор 1234» и «перевод с договора 1234», «между счетами ' +
+    'одного клиента», «с карты на накопительный». Пришедшее доходом не называй — это не доход, ' +
+    'а мои же деньги, переложенные из кармана в карман.\n' +
     'Что считать переводом, а что доходом и расходом:\n' +
     '  - внесение и снятие наличных — это "transfer" со счётом «Наличные» с одной стороны, а не доход и не расход;\n' +
     '  - перевод другому человеку — это "expense" с категорией, а не "transfer". Перевод между своими ' +
@@ -754,7 +758,9 @@ export function ledgerPromptNotes(data: LedgerImportData, lastDays: Map<string, 
   const samples = promptSamples(data)
   if (samples.length > 0) {
     lines.push('', 'Так я уже раскладывал самые частые описания — держись этого:')
-    for (const sample of samples) lines.push(`  - «${sample.text}» → ${sample.category}`)
+    for (const sample of samples) {
+      lines.push(`  - «${sample.text}» → ${sample.category}${sample.special ? ', и это особая трата' : ''}`)
+    }
   }
 
   if (accounts.length > 1) {
@@ -775,7 +781,7 @@ export function ledgerPromptNotes(data: LedgerImportData, lastDays: Map<string, 
 /** Сколько разобранных описаний показывать беседе. Больше — промпт раздувается, толку не прибавляется. */
 export const PROMPT_SAMPLES = 20
 
-type Sample = { text: string; category: string }
+type Sample = { text: string; category: string; special: boolean }
 
 /**
  * Самые частые описания выписок с тем, в какую категорию они уже разложены
@@ -784,22 +790,26 @@ type Sample = { text: string; category: string }
  */
 export function promptSamples(data: LedgerImportData, limit: number = PROMPT_SAMPLES): Sample[] {
   const names = new Map(data.categories.filter((each) => !each.deleted).map((each) => [each.id, each.name]))
-  const counts = new Map<string, { text: string; category: string; count: number }>()
+  const counts = new Map<string, { text: string; category: string; special: boolean; count: number }>()
 
+  // «Особая» — суждение человека, а не свойство продавца: поездки, техника,
+  // лечение у каждого свои. Взять его неоткуда, кроме как из того, что он
+  // уже отметил сам, — и тогда беседа перестаёт спрашивать об этом заново.
   for (const entry of data.entries) {
     if (entry.deleted || !entry.bankText || !entry.categoryId) continue
     const category = names.get(entry.categoryId)
     if (!category) continue
-    const key = `${entry.bankText.trim().toLocaleLowerCase('ru')}→${category}`
+    const special = entry.special === true
+    const key = `${entry.bankText.trim().toLocaleLowerCase('ru')}→${category}→${special}`
     const was = counts.get(key)
     if (was) was.count += 1
-    else counts.set(key, { text: entry.bankText.trim(), category, count: 1 })
+    else counts.set(key, { text: entry.bankText.trim(), category, special, count: 1 })
   }
 
   return [...counts.values()]
     .sort((a, b) => b.count - a.count || a.text.localeCompare(b.text, 'ru'))
     .slice(0, limit)
-    .map(({ text, category }) => ({ text, category }))
+    .map(({ text, category, special }) => ({ text, category, special }))
 }
 
 // ─── Замена итога периода операциями (Р-02) ────────────────────────────────

@@ -396,7 +396,7 @@ describe('промпт знает справочники и загруженно
 
   it('самые частые описания идут первыми и вместе со своей категорией', () => {
     const samples = promptSamples(base({ entries: loaded }))
-    expect(samples[0]).toEqual({ text: 'МАГАЗИН У ДОМА', category: 'Продукты' })
+    expect(samples[0]).toEqual({ text: 'МАГАЗИН У ДОМА', category: 'Продукты', special: false })
     expect(samples).toHaveLength(2)
   })
 
@@ -649,5 +649,26 @@ describe('движения внутри счёта объявляются сум
     expect(transfers?.reason).toContain('ни по одной из сторон')
     expect(transfers?.reason).toContain('Наличные')
     expect(plan.issues.some((each) => each.title === 'Наличные')).toBe(false)
+  })
+})
+
+describe('промпт помнит, что я считаю особым', () => {
+  it('отмеченная особой трата приходит в промпт вместе с пометкой', () => {
+    const entries: Entry[] = [
+      { id: 'a', updatedAt: AT, kind: 'expense', accountId: BANK.id, money: { amount: 100, currency: 'RUB' }, date: '2026-09-14', categoryId: FOOD.id, bankText: 'БОЛЬШАЯ ПОКУПКА', special: true },
+    ]
+    expect(promptSamples(base({ entries }))[0]).toEqual({
+      text: 'БОЛЬШАЯ ПОКУПКА',
+      category: 'Продукты',
+      special: true,
+    })
+    expect(ledgerPromptNotes(base({ entries }), new Map())).toContain('и это особая трата')
+  })
+
+  it('обычная трата пометки не получает', () => {
+    const entries: Entry[] = [
+      { id: 'a', updatedAt: AT, kind: 'expense', accountId: BANK.id, money: { amount: 100, currency: 'RUB' }, date: '2026-09-14', categoryId: FOOD.id, bankText: 'ХЛЕБ' },
+    ]
+    expect(ledgerPromptNotes(base({ entries }), new Map())).not.toContain('особая трата')
   })
 })
