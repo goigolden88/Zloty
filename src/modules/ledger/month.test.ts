@@ -6,6 +6,7 @@ import {
   monthReport,
   observations,
   overUsual,
+  OVER_USUAL_MIN,
   perMonth,
   usualMonth,
   USUAL_MONTHS,
@@ -227,6 +228,43 @@ describe('обычный месяц (Р-07)', () => {
     expect(usualMonth([])).toBeNull()
   })
 
+  // Прежний фильтр брал периоды, кончившиеся строго раньше первого числа,
+  // и выбрасывал период, кончающийся ровно первым, — то есть самый свежий
+  // период прежней таблицы.
+  it('период, кончающийся первым числом месяца, наблюдением остаётся', () => {
+    const edge = [entry({ kind: 'expense', amount: 10000000, period: { from: '2026-08-02', to: '2026-09-01' } })]
+    const { list } = observations(data(edge), '2026-09')
+    expect(list.map((each) => each.kind)).toEqual(['period'])
+  })
+
+  // Одни и те же деньги двумя наблюдениями: неполный месяц выписки тянет
+  // среднее вниз, а период, который его накрывает, стоит рядом целым (Р-20).
+  it('месяц, которым владеет период, вторым наблюдением не становится', () => {
+    const both = [
+      entry({ kind: 'expense', amount: 10000000, period: { from: '2026-08-02', to: '2026-09-01' } }),
+      entry({ kind: 'expense', amount: 4000000, date: '2026-08-18' }),
+      entry({ kind: 'expense', amount: 1000000, date: '2026-08-25' }),
+    ]
+    const usual = usualMonth(observations(data(both), '2026-09').list)
+    expect(usual?.months).toBe(0)
+    expect(usual?.periods).toBe(1)
+  })
+
+  it('период, задевший месяц краем, наблюдение у него не отнимает', () => {
+    const edge = [
+      entry({ kind: 'expense', amount: 10000000, period: { from: '2026-07-02', to: '2026-08-02' } }),
+      entry({ kind: 'expense', amount: 3000000, date: '2026-08-18' }),
+    ]
+    const usual = usualMonth(observations(data(edge), '2026-09').list)
+    expect(usual?.months).toBe(1)
+    expect(usual?.periods).toBe(1)
+  })
+
+  it('период, владеющий самим этим месяцем, его наблюдением не становится', () => {
+    const now = [entry({ kind: 'expense', amount: 10000000, period: { from: '2026-08-25', to: '2026-09-25' } })]
+    expect(observations(data(now), '2026-09').list).toHaveLength(0)
+  })
+
   it('берётся ровно столько месяцев, сколько сказано константой', () => {
     expect(USUAL_MONTHS).toBe(6)
     const long = Array.from({ length: 12 }, (_, at) =>
@@ -237,41 +275,82 @@ describe('обычный месяц (Р-07)', () => {
 })
 
 describe('вышло за обычное (Р-07)', () => {
+  it('месяц, которым владеет период, прошлым месяцем не считается: категорий у периода нет', () => {
+    const covered = [
+      entry({ kind: 'expense', amount: 10000000, period: { from: '2026-08-02', to: '2026-09-01' } }),
+      entry({ kind: 'expense', amount: 5600000, date: '2026-08-18', categoryId: 'tech' }),
+      entry({ kind: 'expense', amount: 300000, date: '2026-09-05', categoryId: 'food' }),
+    ]
+    expect(overUsual(data(covered), '2026-09').months).toBe(0)
+  })
+
+  // Три прошлых месяца — порог `OVER_USUAL_MIN`. «Еда» и «Транспорт» есть
+  // во всех трёх, «Техника» — только в одном: разовая трата.
   const list = [
+    entry({ kind: 'expense', amount: 100000, date: '2026-06-10', categoryId: 'food' }),
     entry({ kind: 'expense', amount: 100000, date: '2026-07-10', categoryId: 'food' }),
     entry({ kind: 'expense', amount: 100000, date: '2026-08-10', categoryId: 'food' }),
+    entry({ kind: 'expense', amount: 50000, date: '2026-06-11', categoryId: 'ride' }),
     entry({ kind: 'expense', amount: 50000, date: '2026-07-11', categoryId: 'ride' }),
     entry({ kind: 'expense', amount: 50000, date: '2026-08-11', categoryId: 'ride' }),
+    entry({ kind: 'expense', amount: 5625000, date: '2026-06-20', categoryId: 'tech' }),
     entry({ kind: 'expense', amount: 400000, date: '2026-09-10', categoryId: 'food' }),
     entry({ kind: 'expense', amount: 50000, date: '2026-09-11', categoryId: 'ride' }),
   ]
 
   it('наибольшее отклонение — первым, и оно знает своё основание', () => {
-    const rows = overUsual(data(list), '2026-09')
-    expect(rows[0]?.categoryId).toBe('food')
-    expect(rows[0]?.now).toBe(400000)
-    expect(rows[0]?.usual).toBe(100000)
-    expect(rows[0]?.delta).toBe(300000)
-    expect(rows[0]?.months).toBe(2)
+    const report = overUsual(data(list), '2026-09')
+    expect(report.over[0]?.categoryId).toBe('food')
+    expect(report.over[0]?.now).toBe(400000)
+    expect(report.over[0]?.usual).toBe(100000)
+    expect(report.over[0]?.delta).toBe(300000)
+    expect(report.over[0]?.months).toBe(3)
+    expect(report.over[0]?.seen).toBe(3)
   })
 
   it('категория, совпавшая с обычной, в список не идёт', () => {
-    expect(overUsual(data(list), '2026-09').some((each) => each.categoryId === 'ride')).toBe(false)
+    expect(overUsual(data(list), '2026-09').over.some((each) => each.categoryId === 'ride')).toBe(false)
   })
 
-  it('прошлого нет — сравнивать не с чем, и список пуст', () => {
+  // Разовая трата, размазанная по прошлым месяцам, даёт верную арифметику
+  // без смысла: «обычно 18 750» — о трате, которой обычно нет вовсе (Р-21).
+  it('категория, встречавшаяся реже половины месяцев, отклонением не становится', () => {
+    const report = overUsual(data(list), '2026-09')
+    expect(report.over.some((each) => each.categoryId === 'tech')).toBe(false)
+    expect(report.rare).toBe(1)
+  })
+
+  it('появившееся впервые не прячется, но и «обычно 0» не выдумывает', () => {
+    const fresh = [...list, entry({ kind: 'expense', amount: 2000000, date: '2026-09-12', categoryId: 'vet' })]
+    const report = overUsual(data(fresh), '2026-09')
+    expect(report.fresh).toEqual([{ categoryId: 'vet', now: 2000000 }])
+    expect(report.over.some((each) => each.categoryId === 'vet')).toBe(false)
+  })
+
+  it('прошлых месяцев меньше порога — блок молчит и называет, сколько их', () => {
+    expect(OVER_USUAL_MIN).toBe(3)
+    const thin = list.filter((each) => !each.date?.startsWith('2026-06'))
+    const report = overUsual(data(thin), '2026-09')
+    expect(report.months).toBe(2)
+    expect(report.over).toEqual([])
+    expect(report.fresh).toEqual([])
+  })
+
+  it('прошлого нет — сравнивать не с чем', () => {
     const only = list.filter((each) => each.date?.startsWith('2026-09'))
-    expect(overUsual(data(only), '2026-09')).toEqual([])
+    expect(overUsual(data(only), '2026-09').months).toBe(0)
   })
 
   it('расход без категории не прячется', () => {
     const noCategory = [
+      entry({ kind: 'expense', amount: 100000, date: '2026-06-10' }),
+      entry({ kind: 'expense', amount: 100000, date: '2026-07-10' }),
       entry({ kind: 'expense', amount: 100000, date: '2026-08-10' }),
       entry({ kind: 'expense', amount: 900000, date: '2026-09-10' }),
     ]
-    const rows = overUsual(data(noCategory), '2026-09')
-    expect(rows[0]?.categoryId).toBeNull()
-    expect(rows[0]?.delta).toBe(800000)
+    const report = overUsual(data(noCategory), '2026-09')
+    expect(report.over[0]?.categoryId).toBeNull()
+    expect(report.over[0]?.delta).toBe(800000)
   })
 })
 

@@ -38,6 +38,14 @@ export const DAYS_IN_MONTH = 30.44
 /** Сколько категорий показывать в «вышло за обычное». */
 export const OVER_USUAL_SHOWN = 5
 
+/**
+ * Сколько прошлых месяцев нужно, чтобы слово «обычное» что-то значило (Р-21).
+ *
+ * По одному месяцу «обычное» — это тот самый месяц, и отклонение от него
+ * равно нулю по определению. Блок молчит и говорит, чего ждёт.
+ */
+export const OVER_USUAL_MIN = 3
+
 /** Позиция, которая в итог не вошла: нет курса на дату (Р-04). */
 export type Missing = { currency: string; date: string; count: number }
 
@@ -143,6 +151,24 @@ export function daysCoveredBy(totals: readonly Entry[], month: string): number {
   return days.size
 }
 
+/** Сколько дней в месяце. */
+function daysInMonth(month: string): number {
+  return daysBetween(`${month}-01`, lastDayOf(month)) + 1
+}
+
+/**
+ * Владеет ли этими итогами месяц — по большинству его дней (Р-20).
+ *
+ * Край периода, заходящий в соседний месяц на день-другой, месяц не забирает.
+ * Одно правило на два вопроса: считать ли отложенное за месяц (`monthReport`)
+ * и становится ли месяц наблюдением для обычного месяца (`observations`).
+ * Пока правило жило только в первом, второй брал и неполный месяц операций,
+ * и период, который его накрывает, — одни и те же деньги двумя наблюдениями.
+ */
+export function ownsMonth(totals: readonly Entry[], month: string): boolean {
+  return daysCoveredBy(totals, month) * 2 > daysInMonth(month)
+}
+
 // ─── Отчёт месяца ──────────────────────────────────────────────────────────
 
 export type MonthReport = {
@@ -196,13 +222,13 @@ export function monthReport(data: MonthData, month: string): MonthReport {
   // его из дохода нельзя. Иначе отложенным окажется весь доход.
   // Доход не внесён — отложенного тоже не существует: ноль здесь означал бы
   // «ничего не отложено», а правда в том, что считать не из чего (Р-07).
-  const monthDays = daysBetween(`${month}-01`, lastDayOf(month)) + 1
+  const monthDays = daysInMonth(month)
   const coveredDays = daysCoveredBy(periodTotals, month)
   // Период «владеет» месяцем по большинству дней (Р-20). Край периода,
   // заходящий в соседний месяц на день-другой, месяц не забирает: иначе
   // первый же месяц с настоящими выписками не отвечает на главный вопрос
   // из-за одного дня.
-  const covered = coveredDays * 2 > monthDays
+  const covered = ownsMonth(periodTotals, month)
   const savedProblem: SavedProblem = covered ? 'covered' : income.entries === 0 ? 'no-income' : null
 
   const saved = savedProblem === null ? income.amount - expense.amount : null
@@ -269,6 +295,11 @@ export function observations(
   let cursor = month
   for (let step = 0; step < count; step++) {
     cursor = previousMonth(cursor)
+    // Месяцем владеет период — значит его расход записан периодом, а то,
+    // что лежит в нём операциями, — часть той же суммы, а не второе
+    // наблюдение (Р-20). Считать оба значило бы усреднить неполный месяц
+    // выписки вместе с целым периодом, который его же и накрывает.
+    if (ownsMonth(totalsTouching(data.entries, cursor), cursor)) continue
     const expenses = operationsOf(data.entries, cursor).filter((each) => each.kind === 'expense' && !each.special)
     if (expenses.length === 0) continue
     const sum = sumOf(expenses, data)
@@ -276,10 +307,18 @@ export function observations(
     if (sum.entries > 0) found.push({ kind: 'month', label: cursor, monthly: sum.amount })
   }
 
-  // Итоги периодов, кончившиеся раньше этого месяца, — тоже наблюдения:
-  // на них стоит вся история прежней таблицы.
+  // Итоги периодов — тоже наблюдения: на них стоит вся история прежней
+  // таблицы. Берутся те, что начались раньше этого месяца и им не владеют
+  // (Р-20). Прежнее «кончился раньше первого числа» отбрасывало период,
+  // кончающийся ровно первым числом, — то есть самый свежий период истории.
   const totals = data.entries.filter(
-    (each) => !each.deleted && each.kind === 'expense' && !each.special && each.period && each.period.to < `${month}-01`,
+    (each) =>
+      !each.deleted &&
+      each.kind === 'expense' &&
+      !each.special &&
+      each.period &&
+      each.period.from < `${month}-01` &&
+      !ownsMonth([each], month),
   )
   for (const total of totals.slice(-count)) {
     const period = total.period
@@ -330,6 +369,30 @@ export type OverUsual = {
   delta: number
   /** По скольким прошлым месяцам посчитано обычное. */
   months: number
+  /** В скольких из них категория вообще встречалась (Р-21). */
+  seen: number
+}
+
+/** Категория, которой в прошлых месяцах не было вовсе: сравнивать не с чем. */
+export type Fresh = {
+  categoryId: string | null
+  /** Расход этого месяца в базовой валюте. */
+  now: number
+}
+
+/** «Вышло за обычное» целиком — вместе с тем, почему чего-то нет (Р-21). */
+export type OverUsualReport = {
+  /** Прошлых месяцев, по которым считается обычное. */
+  months: number
+  /** Отклонения по категориям, которые повторяются. */
+  over: OverUsual[]
+  /** Появившееся впервые. Прячется только то, что и вправду не с чем сравнить. */
+  fresh: Fresh[]
+  /**
+   * Сколько категорий встречались реже половины прошлых месяцев: обычного
+   * у них нет, но пропадать молча они не должны (Р-07).
+   */
+  rare: number
 }
 
 /**
@@ -348,39 +411,71 @@ export function overUsual(
   month: string,
   count: number = USUAL_MONTHS,
   shown: number = OVER_USUAL_SHOWN,
-): OverUsual[] {
+  least: number = OVER_USUAL_MIN,
+): OverUsualReport {
   const past: string[] = []
   let cursor = month
   for (let step = 0; step < count; step++) {
     cursor = previousMonth(cursor)
+    // Тем же правилом, что и наблюдения: месяц, которым владеет период,
+    // своих чисел по категориям не имеет — период их не разложен (Р-20).
+    if (ownsMonth(totalsTouching(data.entries, cursor), cursor)) continue
     if (operationsOf(data.entries, cursor).some((each) => each.kind === 'expense')) past.push(cursor)
   }
-  if (past.length === 0) return []
+
+  const empty: OverUsualReport = { months: past.length, over: [], fresh: [], rare: 0 }
+  // Прошлых месяцев мало — «обычное» по ним равно им самим. Число молчит,
+  // а экран говорит, чего ждёт (Р-21, п. 4).
+  if (past.length < least) return empty
 
   const now = byCategory(operationsOf(data.entries, month), data)
+
+  // Не только сумма за прошлые месяцы, но и в скольких месяцах категория
+  // вообще встречалась: разовый платёж, размазанный по шести месяцам, даёт
+  // верную арифметику без смысла (Р-21, п. 5).
   const before = new Map<string, number>()
+  const seen = new Map<string, number>()
   for (const each of past) {
     for (const [categoryId, amount] of byCategory(operationsOf(data.entries, each), data)) {
       before.set(categoryId, (before.get(categoryId) ?? 0) + amount)
+      if (amount !== 0) seen.set(categoryId, (seen.get(categoryId) ?? 0) + 1)
     }
   }
 
-  const categories = new Set([...now.keys(), ...before.keys()])
-  const rows: OverUsual[] = []
-  for (const categoryId of categories) {
+  const over: OverUsual[] = []
+  const fresh: Fresh[] = []
+  let rare = 0
+
+  for (const categoryId of new Set([...now.keys(), ...before.keys()])) {
     const thisMonth = now.get(categoryId) ?? 0
+    const months = seen.get(categoryId) ?? 0
+    const id = categoryId === NO_CATEGORY ? null : categoryId
+
+    // Категории в прошлом не было вовсе. «Обычно 0» — выдуманное число:
+    // обычного у неё нет, и это отдельная строка, а не отклонение.
+    if (months === 0) {
+      if (thisMonth !== 0) fresh.push({ categoryId: id, now: thisMonth })
+      continue
+    }
+
+    // Встречалась, но реже половины месяцев — обычного у неё тоже нет.
+    // Молча пропасть она не может: её считают числом (Р-07).
+    if (months * 2 <= past.length) {
+      rare += 1
+      continue
+    }
+
     const usual = Math.round((before.get(categoryId) ?? 0) / past.length)
     if (thisMonth === usual) continue
-    rows.push({
-      categoryId: categoryId === NO_CATEGORY ? null : categoryId,
-      now: thisMonth,
-      usual,
-      delta: thisMonth - usual,
-      months: past.length,
-    })
+    over.push({ categoryId: id, now: thisMonth, usual, delta: thisMonth - usual, months: past.length, seen: months })
   }
 
-  return rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, shown)
+  return {
+    months: past.length,
+    over: over.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, shown),
+    fresh: fresh.sort((a, b) => b.now - a.now).slice(0, shown),
+    rare,
+  }
 }
 
 /** Ключ для расходов, у которых категории нет: в разбивке они не прячутся. */

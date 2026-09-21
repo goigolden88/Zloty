@@ -11,11 +11,13 @@ import {
   monthReport,
   observations,
   overUsual,
+  OVER_USUAL_MIN,
   usualMonth,
   USUAL_MONTHS,
   type Missing,
   type MonthData,
   type MonthReport,
+  type OverUsualReport,
   type Sum,
 } from '../modules/ledger/month.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
@@ -244,27 +246,7 @@ function Report({
         )}
       </div>
 
-      {over.length > 0 && (
-        <div className="block">
-          <h2>Вышло за обычное</h2>
-          <ul className="plain">
-            {over.map((row) => (
-              <li key={row.categoryId ?? 'нет'} className="line">
-                <div className="line__main">
-                  {row.categoryId === null ? 'Без категории' : (names.get(row.categoryId) ?? 'категория удалена')}
-                  <div className="basis">
-                    обычно {show(row.usual)} — по {row.months} {plural(row.months, ['месяцу', 'месяцам', 'месяцам'])}
-                  </div>
-                </div>
-                <div className={row.delta > 0 ? 'error' : 'muted'}>
-                  {row.delta > 0 ? '+' : '−'}
-                  {show(Math.abs(row.delta))}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <OverUsualBlock report={over} names={names} show={show} />
 
       <div className="block">
         <h2>Расход по месяцам</h2>
@@ -298,6 +280,96 @@ function Report({
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * «Вышло за обычное» (Р-07) вместе с тем, почему чего-то в нём нет (Р-21).
+ *
+ * Три случая, и каждый называется словами, а не пустотой:
+ * мало прошлых месяцев; категория появилась впервые; категория встречается
+ * реже половины месяцев. Пустой блок читался бы как «всё в норме».
+ */
+function OverUsualBlock({
+  report,
+  names,
+  show,
+}: {
+  report: OverUsualReport
+  names: Map<string, string>
+  show: (amount: number) => string
+}) {
+  const nameOf = (id: string | null) =>
+    id === null ? 'Без категории' : (names.get(id) ?? 'категория удалена')
+
+  // Прошлых месяцев нет вовсе — об этом уже сказал блок «Обычный месяц».
+  if (report.months === 0) return null
+
+  if (report.months < OVER_USUAL_MIN) {
+    return (
+      <div className="block">
+        <h2>Вышло за обычное</h2>
+        <p className="muted">
+          Считать не по чему: прошлых {plural(report.months, ['месяца', 'месяцев', 'месяцев'])} с операциями —{' '}
+          {report.months}, а нужно {OVER_USUAL_MIN}. По одному месяцу «обычное» — это тот самый месяц,
+          и отклонение от него всегда нулевое.
+        </p>
+      </div>
+    )
+  }
+
+  if (report.over.length === 0 && report.fresh.length === 0 && report.rare === 0) return null
+
+  return (
+    <div className="block">
+      <h2>Вышло за обычное</h2>
+
+      {report.over.length > 0 && (
+        <ul className="plain">
+          {report.over.map((row) => (
+            <li key={row.categoryId ?? 'нет'} className="line">
+              <div className="line__main">
+                {nameOf(row.categoryId)}
+                <div className="basis">
+                  обычно {show(row.usual)} — по {row.months} {plural(row.months, ['месяцу', 'месяцам', 'месяцам'])},
+                  встречалась в {row.seen} из {row.months}
+                </div>
+              </div>
+              <div className={row.delta > 0 ? 'error' : 'muted'}>
+                {row.delta > 0 ? '+' : '−'}
+                {show(Math.abs(row.delta))}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {report.fresh.length > 0 && (
+        <>
+          <h3>Новое в этом месяце</h3>
+          <ul className="plain">
+            {report.fresh.map((row) => (
+              <li key={row.categoryId ?? 'нет'} className="line">
+                <div className="line__main">
+                  {nameOf(row.categoryId)}
+                  <div className="basis">
+                    раньше такой траты не было — сравнивать не с чем
+                  </div>
+                </div>
+                <div>{show(row.now)}</div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {report.rare > 0 && (
+        <p className="basis">
+          ещё {report.rare} {plural(report.rare, ['категория встречалась', 'категории встречались', 'категорий встречались'])}{' '}
+          реже чем в половине прошлых {plural(report.months, ['месяца', 'месяцев', 'месяцев'])} — обычного у них нет
+        </p>
+      )}
+    </div>
   )
 }
 
