@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { CHANGES } from '../changes.ts'
 import { SYNCED_STORES } from '../app/model.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
+import { incomeNotEntered, type RecurringData } from '../modules/ledger/recurring.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useRates } from '../modules/ledger/useRates.ts'
@@ -12,6 +13,7 @@ import {
   observations,
   overUsual,
   OVER_USUAL_MIN,
+  savingsRate,
   toDate,
   usualMonth,
   USUAL_MONTHS,
@@ -19,6 +21,8 @@ import {
   type MonthData,
   type MonthReport,
   type OverUsualReport,
+  type Running,
+  type SavingsRate,
   type Sum,
 } from '../modules/ledger/month.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
@@ -113,6 +117,12 @@ export function Month() {
             }}
             goal={profile?.savingsGoal ?? null}
             names={new Map(ledger.data.categories.map((each) => [each.id, each.name]))}
+            waiting={{
+              recurring: ledger.data.recurring,
+              categories: ledger.data.categories,
+              accounts: ledger.data.accounts,
+              entries: entries.all,
+            }}
           />
         </>
       )}
@@ -126,12 +136,14 @@ function Report({
   data,
   goal,
   names,
+  waiting,
 }: {
   month: string
   onMonth: (month: string) => void
   data: MonthData
   goal: number | null
   names: Map<string, string>
+  waiting: RecurringData
 }) {
   const now = today()
   const report = monthReport(data, month, now)
@@ -185,11 +197,10 @@ function Report({
                 отложенное посчитано: причина его отсутствия разобрана выше. */}
             <p className="big">{show(report.saved ?? 0)}</p>
             <p className="basis">
-              {report.savingsRate === null
-                ? 'доход нулевой, доля не считается'
-                : `${percent(report.savingsRate)} дохода — ${basis(report.income, 'доход')}, ${basis(report.expense, 'расход')}`}
+              {rateWords(savingsRate(report), show)} — {basis(report.income, 'доход')},{' '}
+              {basis(report.expense, 'расход')}
             </p>
-            {goal !== null && report.savingsRate !== null && (
+            {goal !== null && report.savingsRate !== null && savingsRate(report).kind === 'share' && (
               <p className="basis">
                 {report.savingsRate >= goal
                   ? `цель — ${percent(goal)}, и в этом месяце она взята`
@@ -198,6 +209,7 @@ function Report({
             )}
           </>
         )}
+        <WaitingIncome data={waiting} month={month} running={report.running} show={show} names={names} />
       </div>
 
       <div className="block">
@@ -287,6 +299,58 @@ function Report({
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * Норма сбережений словами, которые читаются (Р-23).
+ *
+ * Доля от неполного дохода уходит в сотни процентов и говорит о данных,
+ * а не о месяце. Деньги читаются всегда.
+ */
+function rateWords(rate: SavingsRate, show: (amount: number) => string): string {
+  if (rate.kind === 'none') return 'доход нулевой, доля не считается'
+  if (rate.kind === 'share') return `${percent(rate.share)} дохода`
+  return `расход больше дохода в ${Math.round(rate.times)} ${plural(Math.round(rate.times), ['раз', 'раза', 'раз'])}, на ${show(rate.short)}`
+}
+
+/**
+ * Доход, которого ждали и не дождались (Р-23).
+ *
+ * Не догадка о полноте данных, а факт: шаблон сам сказал, чего ждать.
+ * Дня месяца у шаблона нет (Р-06), поэтому в идущем месяце говорится
+ * «ещё не отмечена» — платёж может быть впереди.
+ */
+function WaitingIncome({
+  data,
+  month,
+  running,
+  show,
+  names,
+}: {
+  data: RecurringData
+  month: string
+  running: Running | null
+  show: (amount: number) => string
+  names: Map<string, string>
+}) {
+  const waiting = incomeNotEntered(data, month)
+  if (waiting.length === 0) return null
+
+  const yet = running !== null ? ' ещё' : ''
+
+  return (
+    <p className="basis">
+      Доход внесён не весь:{' '}
+      {waiting
+        .map(
+          (due) =>
+            `регулярная «${due.recurring.name}» (${names.get(due.recurring.categoryId) ?? 'категория удалена'})` +
+            ` за этот месяц${yet} не отмечена — ждали ${show(due.recurring.expected.amount)}`,
+        )
+        .join('; ')}
+      .
+    </p>
   )
 }
 

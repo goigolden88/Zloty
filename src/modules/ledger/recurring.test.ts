@@ -8,6 +8,7 @@ import {
   enterAll,
   enterRecurring,
   entriesFor,
+  incomeNotEntered,
   leftToPay,
   monthsBetween,
   recurringProblem,
@@ -249,5 +250,54 @@ describe('заведение шаблона', () => {
     const made = createRecurring([], { ...draft, accountId: undefined })
     expect('accountId' in made).toBe(false)
     expect('to' in made).toBe(false)
+  })
+})
+
+describe('доход, которого ждали и не дождались (Р-23)', () => {
+  const stipend: Recurring = {
+    id: 'r-income',
+    updatedAt: AT,
+    name: 'Стипендия',
+    categoryId: 'cat-income',
+    accountId: 'acc',
+    expected: { amount: 2500000, currency: 'RUB' },
+    every: { months: 1 },
+    from: '2026-01',
+    order: 0,
+  }
+  const income: Category = { id: 'cat-income', updatedAt: AT, name: 'Стипендия', side: 'income', order: 0 }
+  const spend: Category = { id: 'cat-spend', updatedAt: AT, name: 'Связь', side: 'expense', order: 1 }
+  const account: Account = { id: 'acc', updatedAt: AT, name: 'Синий банк', currency: 'RUB', kind: 'savings', order: 0 }
+
+  function base(entries: Entry[] = []): RecurringData {
+    return { recurring: [stipend], categories: [income, spend], accounts: [account], entries }
+  }
+
+  it('доходная регулярная без записи названа', () => {
+    expect(incomeNotEntered(base(), '2026-09').map((each) => each.recurring.name)).toEqual(['Стипендия'])
+  })
+
+  it('отмеченная — молчит', () => {
+    const paid: Entry = {
+      id: 'e1',
+      updatedAt: AT,
+      kind: 'income',
+      accountId: 'acc',
+      money: { amount: 2500000, currency: 'RUB' },
+      date: '2026-09-25',
+      categoryId: 'cat-income',
+      recurringId: 'r-income',
+    }
+    expect(incomeNotEntered(base([paid]), '2026-09')).toEqual([])
+  })
+
+  it('расходная регулярная сюда не идёт: она не про полноту дохода', () => {
+    const phone: Recurring = { ...stipend, id: 'r-spend', name: 'Связь', categoryId: 'cat-spend' }
+    const data: RecurringData = { ...base(), recurring: [phone] }
+    expect(incomeNotEntered(data, '2026-09')).toEqual([])
+  })
+
+  it('месяц, в котором шаблона ещё не ждут, молчит', () => {
+    expect(incomeNotEntered(base(), '2025-12')).toEqual([])
   })
 })

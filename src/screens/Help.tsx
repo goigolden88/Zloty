@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { days, plural, timeSpan } from '../shared/core/dates.ts'
 import { QUIET_MS } from '../shared/core/sync.ts'
-import { DAYS_IN_MONTH, OVER_USUAL_MIN, USUAL_MONTHS } from '../modules/ledger/month.ts'
+import { DAYS_IN_MONTH, OVER_USUAL_MIN, SAVINGS_TIMES_LIMIT, USUAL_MONTHS } from '../modules/ledger/month.ts'
 import { RECURRING_FROM_DAY, REMIND_FROM_DAY } from '../modules/ledger/remind.ts'
 import { MAX_DECIMALS } from '../modules/money/money.ts'
 import { RATE_MAX_AGE_DAYS } from '../modules/money/rates.ts'
@@ -78,6 +78,18 @@ export function Help() {
             <b>«Вышло за обычное»</b> — категории, где этот месяц сильнее всего разошёлся с обычным.
             Это отвечает на «куда уходит» лучше, чем доли: доля действия не подсказывает, а отклонение
             подсказывает.
+          </li>
+          <li>
+            <b>Норма сбережений перестаёт быть долей, когда доля перестаёт читаться.</b> Если расход
+            больше дохода более чем в {SAVINGS_TIMES_LIMIT} раза, вместо процентов говорятся кратность
+            и сумма: доля от неполного дохода уходит в сотни процентов и рассказывает о данных,
+            а не о месяце.
+          </li>
+          <li>
+            <b>Приложение говорит, когда доход внесён не весь</b> — и это не догадка. Если заведена
+            доходная регулярная (стипендия, аренда) и её за месяц не отметили, экран называет её
+            и ожидаемую сумму. Чтобы это работало, регулярные надо завести — на экране «Счета
+            и категории».
           </li>
           <li>
             <b>Месяц, который ещё идёт, сравнивается по прожитым дням.</b> Двадцатого числа любая

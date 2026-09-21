@@ -96,6 +96,25 @@ export function dueThisMonth(data: RecurringData, month: string): Due[] {
     })
 }
 
+/**
+ * Доходные регулярные, которых в этом месяце ждали и не дождались (Р-23).
+ *
+ * Это не догадка о полноте дохода, а факт: шаблон сам сказал, чего ждать,
+ * а записи нет. Стипендия — такая же регулярная, как связь, и её отсутствие
+ * объясняет норму сбережений в сотнях процентов лучше любой эвристики.
+ *
+ * Дня месяца у шаблона нет (Р-06), поэтому «не дождались» не значит
+ * «просрочено»: в идущем месяце платёж может быть ещё впереди. Слова об этом
+ * подбирает экран.
+ */
+export function incomeNotEntered(data: RecurringData, month: string): Due[] {
+  return dueThisMonth(data, month).filter((due) => {
+    if (due.entries.length > 0) return false
+    const category = data.categories.find((each) => each.id === due.recurring.categoryId && !each.deleted)
+    return category?.side === 'income'
+  })
+}
+
 /** Сколько из ожидаемого ещё не внесено. Отрицательное — заплачено больше. */
 export function leftToPay(due: Due): number {
   return due.recurring.expected.amount - due.paid

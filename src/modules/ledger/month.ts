@@ -46,6 +46,16 @@ export const OVER_USUAL_SHOWN = 5
  */
 export const OVER_USUAL_MIN = 3
 
+/**
+ * Во сколько раз расход должен превысить доход, чтобы доля перестала
+ * читаться (Р-23).
+ *
+ * До этого предела «отложено −40% дохода» — обычная строка. За ним доля
+ * уходит в сотни процентов и говорит уже не о месяце, а о том, что доход
+ * записан не весь.
+ */
+export const SAVINGS_TIMES_LIMIT = 2
+
 /** Позиция, которая в итог не вошла: нет курса на дату (Р-04). */
 export type Missing = { currency: string; date: string; count: number }
 
@@ -287,6 +297,33 @@ export function monthReport(data: MonthData, month: string, today?: string): Mon
     monthDays,
     running: today === undefined ? null : monthShare(month, today),
   }
+}
+
+/**
+ * Чем называть норму сбережений (Р-23).
+ *
+ * — `share` — доля дохода, обычный случай;
+ * — `times` — расход больше дохода в разы: доля тут нечитаема, и вместо
+ *   процентов говорятся кратность и сумма нехватки;
+ * — `none` — считать не из чего; почему именно, говорит `savedProblem`.
+ */
+export type SavingsRate =
+  | { kind: 'share'; share: number }
+  | { kind: 'times'; times: number; short: number }
+  | { kind: 'none' }
+
+/**
+ * Норма сбережений словами, которые можно прочесть.
+ *
+ * «−1016% дохода» — число честное и с основанием, но нечитаемое: доля
+ * от неполного дохода говорит о данных, а не о человеке. Деньги читаются
+ * всегда, поэтому за пределом доля уступает место сумме и кратности.
+ */
+export function savingsRate(report: MonthReport, limit: number = SAVINGS_TIMES_LIMIT): SavingsRate {
+  if (report.saved === null || report.income.amount <= 0) return { kind: 'none' }
+  const times = report.expense.amount / report.income.amount
+  if (times <= limit) return { kind: 'share', share: report.saved / report.income.amount }
+  return { kind: 'times', times, short: report.expense.amount - report.income.amount }
 }
 
 // ─── Обычный месяц ─────────────────────────────────────────────────────────

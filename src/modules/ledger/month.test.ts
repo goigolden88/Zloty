@@ -9,6 +9,8 @@ import {
   overUsual,
   OVER_USUAL_MIN,
   perMonth,
+  savingsRate,
+  SAVINGS_TIMES_LIMIT,
   toDate,
   usualMonth,
   USUAL_MONTHS,
@@ -353,6 +355,42 @@ describe('вышло за обычное (Р-07)', () => {
     const report = overUsual(data(noCategory), '2026-09')
     expect(report.over[0]?.categoryId).toBeNull()
     expect(report.over[0]?.delta).toBe(800000)
+  })
+})
+
+describe('норма сбережений читается (Р-23)', () => {
+  function report(income: number, expense: number) {
+    return monthReport(
+      data([
+        entry({ kind: 'income', amount: income, date: '2026-09-05' }),
+        entry({ kind: 'expense', amount: expense, date: '2026-09-10' }),
+      ]),
+      '2026-09',
+    )
+  }
+
+  it('обычный месяц называется долей дохода', () => {
+    expect(savingsRate(report(10000000, 8000000))).toEqual({ kind: 'share', share: 0.2 })
+  })
+
+  it('расход больше дохода, но в пределах — всё ещё доля', () => {
+    expect(SAVINGS_TIMES_LIMIT).toBe(2)
+    expect(savingsRate(report(10000000, 20000000))).toEqual({ kind: 'share', share: -1 })
+  })
+
+  // «−1016% дохода» — число честное и нечитаемое: доля от неполного дохода
+  // говорит о данных, а не о человеке.
+  it('расход больше дохода в разы — кратность и сумма вместо сотен процентов', () => {
+    const rate = savingsRate(report(1000000, 11000000))
+    expect(rate.kind).toBe('times')
+    if (rate.kind !== 'times') throw new Error('ожидалась кратность')
+    expect(Math.round(rate.times)).toBe(11)
+    expect(rate.short).toBe(10000000)
+  })
+
+  it('дохода нет — доли нет, и это не ноль', () => {
+    const none = monthReport(data([entry({ kind: 'expense', amount: 500000, date: '2026-09-10' })]), '2026-09')
+    expect(savingsRate(none)).toEqual({ kind: 'none' })
   })
 })
 

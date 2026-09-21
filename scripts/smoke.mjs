@@ -809,8 +809,9 @@ async function scenario(profile) {
       { kind: 'expense', account: 'Синий банк', amount: 1000, date: '2026-04-12', category: 'Еда' },
       { kind: 'expense', account: 'Синий банк', amount: 1000, date: '2026-05-12', category: 'Еда' },
       { kind: 'expense', account: 'Синий банк', amount: 20000, date: '2026-03-20', category: 'Техника' },
+      { kind: 'income', account: 'Синий банк', amount: 50, date: '2026-05-14', category: 'Кэшбэк' },
     ],
-    checks: [{ account: 'Синий банк', from: '2026-03-01', to: '2026-05-31', income: 0, expense: 23000 }],
+    checks: [{ account: 'Синий банк', from: '2026-03-01', to: '2026-05-31', income: 50, expense: 23000 }],
   })
 
   await go('/import')
@@ -893,6 +894,78 @@ async function scenario(profile) {
     'и отклонение по категории считается от урезанного обычного',
     firstOfMonth || /обычно .+ к этому дню — по \d+ месяц/.test(usual),
     line(usual, 'встречалась в'),
+  )
+
+  // ── Доход, которого ждали и не дождались (Р-23). Доходная регулярная,
+  //    не отмеченная за месяц, — не догадка о полноте данных, а факт:
+  //    шаблон сам сказал, чего ждать. Категория «Кэшбэк» к этому месту уже
+  //    заведена выпиской, и она доходная.
+  // Расход, который делает доход месяца заведомо неполным: доля от такого
+  //    дохода уходит в сотни процентов. Вносится руками — наличные через
+  //    импорт и не ходят (Р-12).
+  await go('/entries')
+  await act(`byText('button', 'Внести').click();`)
+  await sleep(500)
+  await act(`
+    set(document.querySelector('input[placeholder="1234,56"]'), '2500');
+    const category = [...document.querySelectorAll('select')].find((each) =>
+      [...each.options].some((option) => option.textContent.trim() === 'Еда'));
+    set(category, [...category.options].find((option) => option.textContent.trim() === 'Еда').value);
+    category.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать').click();`)
+  await sleep(700)
+
+  await go('/books')
+  // Блок мог остаться развёрнутым с прошлого шага: сворачивание живёт
+  // в настройках устройства. Щёлкать вслепую — значит его закрыть.
+  await act(`
+    if (!byText('button', 'Завести регулярную')) startsWith('.fold__btn', 'Регулярные').click();
+  `)
+  await sleep(400)
+  await act(`byText('button', 'Завести регулярную').click();`)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('input[placeholder="Связь"]'), 'Стипендия');
+    const category = [...document.querySelectorAll('select')].find((each) =>
+      [...each.options].some((option) => option.textContent.includes('Кэшбэк')));
+    const income = [...category.options].find((option) => option.textContent.includes('Кэшбэк'));
+    set(category, income.value);
+    category.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`
+    set(document.querySelector('input[placeholder="1234,56"]'), '25000');
+    byText('button', 'Завести').click();
+  `)
+  await sleep(800)
+
+  await go('/')
+  await sleep(700)
+  const waiting = await screen()
+  check(
+    'приложение называет доход, которого ждали и не дождались',
+    has(waiting, 'Доход внесён не весь') && has(waiting, 'Стипендия'),
+    line(waiting, 'Доход внесён не весь'),
+  )
+  check(
+    'и говорит, сколько по нему ждали, а не только что его нет',
+    /ждали 25\s?000,00/.test(waiting.replace(/\u00a0/g, ' ')),
+    line(waiting, 'ждали'),
+  )
+  // Доля от неполного дохода уходит в сотни процентов. В мае доход — копейки
+  // против расхода: ровно тот случай, ради которого доля уступает место
+  // кратности и сумме (Р-23).
+  for (let step = 0; step < 4; step++) {
+    await act(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '←').click();`)
+    await sleep(400)
+  }
+  const thin = await screen()
+  check(
+    'норма сбережений читается: кратность и сумма вместо сотен процентов',
+    has(thin, 'расход больше дохода в') && !/\u2212\d{3,}%|-\d{3,}%/.test(thin),
+    line(thin, 'расход больше дохода'),
   )
 
   // ── Правка загруженной операции: ключ импорта обязан её пережить,
