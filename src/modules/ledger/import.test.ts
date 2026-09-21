@@ -3,6 +3,7 @@ import type { Account, Category, Currency, Entry } from '../../app/model.ts'
 import type { ImportContext } from '../../shared/core/importing.ts'
 import {
   applyChecks,
+  checksImportSpec,
   entriesImportSpec,
   importAccounts,
   importCategories,
@@ -614,7 +615,7 @@ describe('движения внутри счёта объявляются сум
       base(),
     )
     const reason = applyChecks(checks, [spend(34990)], base()).issues[0]?.reason ?? ''
-    expect(reason).toContain('движений внутри счёта беседа не объявила')
+    expect(reason).toContain('не объявила ничего')
     expect(reason).toContain('skippedIn')
   })
 
@@ -701,5 +702,36 @@ describe('пометка «особая» в промпте — голосова
   it('большинство обычных — пометки нет', () => {
     const entries = [bought('1', true), bought('2'), bought('3')]
     expect(promptSamples(base({ entries }))[0]?.special).toBe(false)
+  })
+})
+
+describe('операция вне периода выписки объявляется тем же полем (Р-18)', () => {
+  it('покупка до начала периода, проведённая внутри него, сводит сверку через skippedOut', () => {
+    const early: Entry = {
+      id: 'e-early',
+      updatedAt: AT,
+      kind: 'expense',
+      accountId: BANK.id,
+      money: { amount: 24499, currency: 'RUB' },
+      date: '2026-08-18',
+      categoryId: FOOD.id,
+    }
+    const inside: Entry = { ...early, id: 'e-in', money: { amount: 34990, currency: 'RUB' }, date: '2026-09-14' }
+
+    // Выписка за сентябрь считает обе, а по дате операции внутрь окна
+    // попадает только вторая — первая объявлена суммой.
+    const { checks } = importChecks(
+      [{ account: 'Синий банк', from: '2026-09-01', to: '2026-09-30', opening: 1000, closing: 405.11, skippedOut: 244.99 }],
+      base(),
+    )
+    const plan = applyChecks(checks, [early, inside], base())
+    expect(plan.issues).toHaveLength(0)
+    expect(plan.kept).toHaveLength(2)
+  })
+
+  it('промпт объясняет обе породы пропущенного', () => {
+    const fields = checksImportSpec.fields.join('\n')
+    expect(fields).toContain('внутри этого же банка')
+    expect(fields).toContain('раньше «from» или позже «to»')
   })
 })
