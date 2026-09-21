@@ -21,7 +21,7 @@
  * — **Обычный месяц — без особых трат** (Р-05, Р-07).
  */
 
-import { daysBetween, lastDayOf, periodDays } from '../../shared/core/dates.ts'
+import { daysBetween, lastDayOf, monthOf, periodDays } from '../../shared/core/dates.ts'
 import type { Currency, Entry, Money, Rate } from '../../app/model.ts'
 import { convert } from '../money/rates.ts'
 
@@ -169,6 +169,42 @@ export function ownsMonth(totals: readonly Entry[], month: string): boolean {
   return daysCoveredBy(totals, month) * 2 > daysInMonth(month)
 }
 
+// ─── Месяц, который ещё идёт ───────────────────────────────────────────────
+
+/** Сколько дней месяца прошло и сколько их всего. */
+export type Running = { passed: number; total: number }
+
+/**
+ * Идёт ли месяц ещё — и сколько его дней прошло (Р-22).
+ *
+ * Null — месяц кончился: его можно сравнивать с обычным целиком.
+ * `passed` равен нулю у месяца, который ещё не начался.
+ *
+ * `today` приходит аргументом, а не берётся из часов: расчёт остаётся
+ * чистой функцией, и тест может встать в любой день.
+ */
+export function monthShare(month: string, today: string): Running | null {
+  const total = daysInMonth(month)
+  const now = monthOf(today)
+  if (month < now) return null
+  if (month > now) return { passed: 0, total }
+  return { passed: Number(today.slice(8, 10)), total }
+}
+
+/**
+ * Часть суммы, приходящаяся на прошедшие дни месяца (Р-22).
+ *
+ * Так обычный месяц урезается до того же срока, что уже прожит: сравниваются
+ * две известные величины, а не известная с выдуманной. Прогноза здесь нет
+ * и быть не должно — квартплата первого числа задрала бы темп, тридцатого
+ * занизила бы, а период прежней таблицы потому и делится по дням, что он
+ * закончен (Р-12, п. 6).
+ */
+export function toDate(amount: number, running: Running | null): number {
+  if (!running || running.total <= 0) return amount
+  return Math.round((amount * running.passed) / running.total)
+}
+
 // ─── Отчёт месяца ──────────────────────────────────────────────────────────
 
 export type MonthReport = {
@@ -194,6 +230,8 @@ export type MonthReport = {
   /** Сколько дней месяца накрыты итогами по расходу и сколько дней в месяце (Р-20). */
   coveredDays: number
   monthDays: number
+  /** Месяц ещё идёт — сколько его дней прошло (Р-22). Null — месяц кончился. */
+  running: Running | null
 }
 
 /**
@@ -207,7 +245,7 @@ export type MonthReport = {
  */
 export type SavedProblem = 'no-income' | 'covered' | null
 
-export function monthReport(data: MonthData, month: string): MonthReport {
+export function monthReport(data: MonthData, month: string, today?: string): MonthReport {
   const operations = operationsOf(data.entries, month)
 
   const income = sumOf(operations.filter((each) => each.kind === 'income'), data)
@@ -247,6 +285,7 @@ export function monthReport(data: MonthData, month: string): MonthReport {
     periodTotals,
     coveredDays,
     monthDays,
+    running: today === undefined ? null : monthShare(month, today),
   }
 }
 
@@ -384,6 +423,8 @@ export type Fresh = {
 export type OverUsualReport = {
   /** Прошлых месяцев, по которым считается обычное. */
   months: number
+  /** Месяц ещё идёт: обычное урезано до прошедших дней (Р-22). */
+  running: Running | null
   /** Отклонения по категориям, которые повторяются. */
   over: OverUsual[]
   /** Появившееся впервые. Прячется только то, что и вправду не с чем сравнить. */
@@ -409,10 +450,16 @@ export type OverUsualReport = {
 export function overUsual(
   data: MonthData,
   month: string,
-  count: number = USUAL_MONTHS,
-  shown: number = OVER_USUAL_SHOWN,
-  least: number = OVER_USUAL_MIN,
+  options: { count?: number; shown?: number; least?: number; today?: string } = {},
 ): OverUsualReport {
+  const count = options.count ?? USUAL_MONTHS
+  const shown = options.shown ?? OVER_USUAL_SHOWN
+  const least = options.least ?? OVER_USUAL_MIN
+  // Месяц ещё идёт — обычное урезается до прожитого срока (Р-22). Иначе
+  // двадцатого числа каждая категория оказывается «ниже обычного», и список
+  // отклонений говорит только о том, что месяц не кончился.
+  const running = options.today === undefined ? null : monthShare(month, options.today)
+
   const past: string[] = []
   let cursor = month
   for (let step = 0; step < count; step++) {
@@ -423,7 +470,7 @@ export function overUsual(
     if (operationsOf(data.entries, cursor).some((each) => each.kind === 'expense')) past.push(cursor)
   }
 
-  const empty: OverUsualReport = { months: past.length, over: [], fresh: [], rare: 0 }
+  const empty: OverUsualReport = { months: past.length, running, over: [], fresh: [], rare: 0 }
   // Прошлых месяцев мало — «обычное» по ним равно им самим. Число молчит,
   // а экран говорит, чего ждёт (Р-21, п. 4).
   if (past.length < least) return empty
@@ -465,13 +512,14 @@ export function overUsual(
       continue
     }
 
-    const usual = Math.round((before.get(categoryId) ?? 0) / past.length)
+    const usual = toDate(Math.round((before.get(categoryId) ?? 0) / past.length), running)
     if (thisMonth === usual) continue
     over.push({ categoryId: id, now: thisMonth, usual, delta: thisMonth - usual, months: past.length, seen: months })
   }
 
   return {
     months: past.length,
+    running,
     over: over.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, shown),
     fresh: fresh.sort((a, b) => b.now - a.now).slice(0, shown),
     rare,

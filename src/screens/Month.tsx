@@ -12,6 +12,7 @@ import {
   observations,
   overUsual,
   OVER_USUAL_MIN,
+  toDate,
   usualMonth,
   USUAL_MONTHS,
   type Missing,
@@ -132,10 +133,11 @@ function Report({
   goal: number | null
   names: Map<string, string>
 }) {
-  const report = monthReport(data, month)
+  const now = today()
+  const report = monthReport(data, month, now)
   const seen = observations(data, month)
   const usual = usualMonth(seen.list, seen.missing)
-  const over = overUsual(data, month)
+  const over = overUsual(data, month, { today: now })
   const bars = monthlyExpenses(data, month, BARS)
 
   const show = (amount: number) =>
@@ -152,6 +154,17 @@ function Report({
           →
         </button>
       </div>
+
+      {report.running !== null && report.running.passed > 0 && (
+        <p className="basis">
+          Месяц ещё идёт — прошло {report.running.passed} из {report.running.total}{' '}
+          {plural(report.running.total, ['дня', 'дней', 'дней'])}. Сравнения с обычным месяцем ниже
+          урезаны до этого же срока.
+        </p>
+      )}
+      {report.running !== null && report.running.passed === 0 && (
+        <p className="basis">Месяц ещё не начался — сравнивать пока нечего.</p>
+      )}
 
       {/* Главный ответ — первым. Всё остальное объясняет его. */}
       <div className="block">
@@ -235,13 +248,7 @@ function Report({
             <p className="big">{show(usual.monthly)}</p>
             <p className="basis">{usualBasis(usual.months, usual.periods)}</p>
             <MissingNote list={usual.missing} />
-            {report.usualExpense.entries > 0 && (
-              <p className="basis">
-                этот месяц — {show(report.usualExpense.amount)}, то есть{' '}
-                {report.usualExpense.amount > usual.monthly ? 'больше' : 'меньше'} обычного на{' '}
-                {show(Math.abs(report.usualExpense.amount - usual.monthly))}
-              </p>
-            )}
+            {report.usualExpense.entries > 0 && <ThisMonth report={report} usual={usual.monthly} show={show} />}
           </>
         )}
       </div>
@@ -280,6 +287,45 @@ function Report({
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * Этот месяц против обычного (Р-07), а у месяца, который ещё идёт, —
+ * против той его части, что уже прожита (Р-22).
+ *
+ * Сравнивать неполный месяц с полным нельзя: двадцатого числа любой месяц
+ * «меньше обычного», и строка говорит не о тратах, а о календаре.
+ */
+function ThisMonth({
+  report,
+  usual,
+  show,
+}: {
+  report: MonthReport
+  usual: number
+  show: (amount: number) => string
+}) {
+  const running = report.running
+  const now = report.usualExpense.amount
+  const against = toDate(usual, running)
+  const word = now > against ? 'больше' : 'меньше'
+  const delta = show(Math.abs(now - against))
+
+  if (running === null) {
+    return (
+      <p className="basis">
+        этот месяц — {show(now)}, то есть {word} обычного на {delta}
+      </p>
+    )
+  }
+  if (running.passed === 0) return null
+
+  return (
+    <p className="basis">
+      за прошедшие {running.passed} {plural(running.passed, ['день', 'дня', 'дней'])} — {show(now)},
+      а обычно к этому дню — {show(against)}: {word} на {delta}
+    </p>
   )
 }
 
@@ -331,8 +377,10 @@ function OverUsualBlock({
               <div className="line__main">
                 {nameOf(row.categoryId)}
                 <div className="basis">
-                  обычно {show(row.usual)} — по {row.months} {plural(row.months, ['месяцу', 'месяцам', 'месяцам'])},
-                  встречалась в {row.seen} из {row.months}
+                  обычно {show(row.usual)}
+                  {report.running !== null && ' к этому дню'} — по {row.months}{' '}
+                  {plural(row.months, ['месяцу', 'месяцам', 'месяцам'])}, встречалась в {row.seen} из{' '}
+                  {row.months}
                 </div>
               </div>
               <div className={row.delta > 0 ? 'error' : 'muted'}>

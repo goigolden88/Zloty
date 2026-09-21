@@ -846,6 +846,55 @@ async function scenario(profile) {
     line(usual, 'Новое в этом месяце'),
   )
 
+  // ── Месяц, который ещё идёт (Р-22). Прогон всегда открывается на текущем
+  //    месяце, так что строка обязана быть — кроме первого дня месяца,
+  //    когда прошедших дней ещё нет.
+  const firstOfMonth = new Date().getDate() === 1
+  check(
+    'месяц, который ещё идёт, назван вместе с числом прожитых дней',
+    firstOfMonth || /Месяц ещё идёт — прошло \d+ из \d+ дн/.test(usual),
+    line(usual, 'Месяц ещё идёт'),
+  )
+  check(
+    'сравнение с обычным урезано до того же срока, а не досчитано до месяца',
+    firstOfMonth || (has(usual, 'а обычно к этому дню') && !has(usual, 'на сегодняшнем темпе')),
+    line(usual, 'обычно к этому дню'),
+  )
+
+  // Слова про урезание стоят на месте и тогда, когда урезания нет: сторож
+  // на текст не ловит пропавшее число. Поэтому здесь сравниваются сами
+  // числа — обычный месяц целиком против него же к этому дню (Р-22).
+  const toDay = await run(`
+    (() => {
+      const head = [...document.querySelectorAll('h2')].find((el) => el.textContent.includes('Обычный месяц'));
+      const block = head?.closest('.block');
+      if (!block) return null;
+      const number = (text) => {
+        const found = text.replace(/\\s|\\u00a0|\\u202f/g, '').match(/(\\d+(?:,\\d+)?)/);
+        return found ? Number(found[1].replace(',', '.')) : null;
+      };
+      const whole = number(block.querySelector('.big')?.textContent ?? '');
+      const line = [...block.querySelectorAll('p')].find((el) => el.textContent.includes('к этому дню'));
+      const part = line ? number(line.textContent.split('к этому дню')[1] ?? '') : null;
+      return { whole, part };
+    })()
+  `)
+  check(
+    'и урезанное обычное — число меньше целого, а не то же самое',
+    firstOfMonth ||
+      (toDay !== null &&
+        typeof toDay.whole === 'number' &&
+        typeof toDay.part === 'number' &&
+        toDay.part > 0 &&
+        toDay.part < toDay.whole),
+    `целиком ${toDay?.whole}, к этому дню ${toDay?.part}`,
+  )
+  check(
+    'и отклонение по категории считается от урезанного обычного',
+    firstOfMonth || /обычно .+ к этому дню — по \d+ месяц/.test(usual),
+    line(usual, 'встречалась в'),
+  )
+
   // ── Правка загруженной операции: ключ импорта обязан её пережить,
   //    иначе следующая выписка принесёт дубль (Р-12, «Цена», п. 2).
   await go('/entries')

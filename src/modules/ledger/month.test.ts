@@ -4,10 +4,12 @@ import {
   DAYS_IN_MONTH,
   monthlyExpenses,
   monthReport,
+  monthShare,
   observations,
   overUsual,
   OVER_USUAL_MIN,
   perMonth,
+  toDate,
   usualMonth,
   USUAL_MONTHS,
   type MonthData,
@@ -351,6 +353,51 @@ describe('вышло за обычное (Р-07)', () => {
     const report = overUsual(data(noCategory), '2026-09')
     expect(report.over[0]?.categoryId).toBeNull()
     expect(report.over[0]?.delta).toBe(800000)
+  })
+})
+
+describe('месяц, который ещё идёт (Р-22)', () => {
+  it('прошедший месяц считается полным: сравнивать его можно целиком', () => {
+    expect(monthShare('2026-08', '2026-09-22')).toBeNull()
+  })
+
+  it('текущий месяц знает, сколько его дней прошло', () => {
+    expect(monthShare('2026-09', '2026-09-22')).toEqual({ passed: 22, total: 30 })
+  })
+
+  it('месяц, который ещё не начался, прожитых дней не имеет', () => {
+    expect(monthShare('2026-10', '2026-09-22')).toEqual({ passed: 0, total: 31 })
+  })
+
+  it('обычное урезается до прожитого срока, а не достраивается до месяца', () => {
+    expect(toDate(3000000, { passed: 15, total: 30 })).toBe(1500000)
+    expect(toDate(3000000, null)).toBe(3000000)
+  })
+
+  // Двадцатого числа любая категория «ниже обычного», и список отклонений
+  // говорит о календаре, а не о тратах.
+  it('отклонение по категории считается от урезанного обычного', () => {
+    const list = [
+      entry({ kind: 'expense', amount: 3000000, date: '2026-06-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 3000000, date: '2026-07-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 3000000, date: '2026-08-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 1500000, date: '2026-09-05', categoryId: 'food' }),
+    ]
+    const whole = overUsual(data(list), '2026-09')
+    expect(whole.over[0]?.usual).toBe(3000000)
+    expect(whole.over[0]?.delta).toBe(-1500000)
+
+    // Полмесяца прошло — обычное к этому дню тоже половина, и трата ровно
+    // в обычном темпе отклонением не считается вовсе.
+    const half = overUsual(data(list), '2026-09', { today: '2026-09-15' })
+    expect(half.running).toEqual({ passed: 15, total: 30 })
+    expect(half.over).toEqual([])
+  })
+
+  it('отчёт месяца говорит, идёт ли месяц, только когда его спросили о дне', () => {
+    const list = [entry({ kind: 'expense', amount: 100000, date: '2026-09-05' })]
+    expect(monthReport(data(list), '2026-09').running).toBeNull()
+    expect(monthReport(data(list), '2026-09', '2026-09-22').running).toEqual({ passed: 22, total: 30 })
   })
 })
 
