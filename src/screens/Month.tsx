@@ -5,6 +5,7 @@ import type { Account } from '../app/model.ts'
 import { SYNCED_STORES } from '../app/model.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
 import { recordedThrough, type Recorded } from '../modules/ledger/entries.ts'
+import { needed, rareIds, type Need } from '../modules/ledger/need.ts'
 import { incomeNotEntered, type RecurringData } from '../modules/ledger/recurring.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
@@ -156,8 +157,13 @@ function Report({
   // и сравнивать надо по записанному.
   const recorded = recordedThrough(accounts)
   const report = monthReport(data, month, now, recorded?.day ?? null)
-  const seen = observations(data, month)
+  // Платежи по неежемесячным шаблонам выносятся из обычного месяца: они
+  // вернутся долей в необходимом доходе (Р-27).
+  const needData = { ...data, recurring: waiting.recurring, categories: waiting.categories }
+  const rare = rareIds(needData, month)
+  const seen = observations(data, month, { without: rare })
   const usual = usualMonth(seen.list, seen.missing)
+  const need = needed(usual, needData, month, goal, seen.periodsUncleaned)
   const over = overUsual(data, month, { today: now, through: recorded?.day ?? null })
   const bars = monthlyExpenses(data, month, BARS)
 
@@ -264,6 +270,8 @@ function Report({
           </>
         )}
       </div>
+
+      <NeedBlock need={need} income={report.income} excluded={seen.excluded} show={show} />
 
       <OverUsualBlock report={over} names={names} show={show} />
 
@@ -436,6 +444,81 @@ function ThisMonth({
       за {running.passed} {plural(running.passed, ['день', 'дня', 'дней'])} месяца — {show(now)},
       а обычно за такой же срок — {show(against)}: {word} на {delta}
     </p>
+  )
+}
+
+/**
+ * «Какой доход мне нужен» (Р-07, Р-27) — второй вопрос приложения.
+ *
+ * Каждое слагаемое названо: обычный месяц, доля редких шаблонов, цель.
+ * Из чего вычесть нельзя — тоже названо: итоги прежней таблицы пометок
+ * регулярных не имеют.
+ */
+function NeedBlock({
+  need,
+  income,
+  excluded,
+  show,
+}: {
+  need: Need | null
+  income: Sum
+  excluded: number
+  show: (amount: number) => string
+}) {
+  if (need === null) return null
+
+  const enough = income.entries > 0 ? income.amount - need.amount : null
+
+  return (
+    <div className="block">
+      <h2>Какой доход мне нужен</h2>
+      <p className="big">{show(need.amount)}</p>
+
+      <p className="basis">
+        обычный месяц {show(need.usual)} — {usualBasis(need.months, need.periods)}
+        {need.rareCount > 0 && (
+          <>
+            ; плюс {show(need.rare)} в месяц — доля {need.rareCount}{' '}
+            {plural(need.rareCount, [
+              'регулярной, приходящей',
+              'регулярных, приходящих',
+              'регулярных, приходящих',
+            ])}{' '}
+            реже раза в месяц
+          </>
+        )}
+        {need.goal !== null && need.goal > 0 && need.goal < 1 && (
+          <>; и цель откладывать {percent(need.goal)}</>
+        )}
+      </p>
+
+      {excluded > 0 && (
+        <p className="basis">
+          из обычного месяца вынесено {excluded}{' '}
+          {plural(excluded, ['платёж', 'платежа', 'платежей'])} по редким регулярным — иначе они
+          посчитались бы дважды
+        </p>
+      )}
+
+      {need.uncleanedPeriods > 0 && (
+        <p className="error">
+          {need.uncleanedPeriods} {plural(need.uncleanedPeriods, ['наблюдение', 'наблюдения', 'наблюдений'])} из
+          обычного месяца — итоги прежней таблицы, и вынести редкие платежи из них нечем: пометок
+          регулярных у них нет. Если такие платежи там были, нужное число немного завышено.
+        </p>
+      )}
+
+      <MissingNote list={need.missing} />
+
+      {enough === null ? (
+        <p className="basis">доход за этот месяц не внесён — сравнивать не с чем</p>
+      ) : (
+        <p className="basis">
+          доход этого месяца — {show(income.amount)}, {basis(income, 'он посчитан')}:{' '}
+          {enough >= 0 ? `хватает с запасом в ${show(enough)}` : `не хватает ${show(-enough)}`}
+        </p>
+      )}
+    </div>
   )
 }
 

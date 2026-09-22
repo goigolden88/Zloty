@@ -1031,9 +1031,52 @@ async function scenario(profile) {
   `)
   await sleep(800)
 
+  // Годовая регулярная: её доля раскладывается по месяцам в необходимом
+  //    доходе, а платёж по ней выносится из обычного месяца (Р-27).
+  await act(`byText('button', 'Завести регулярную').click();`)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('input[placeholder="Связь"]'), 'Страховка');
+    set(document.querySelector('input[placeholder="1234,56"]'), '12000');
+    const every = document.querySelector('input[type="number"]');
+    set(every, '12');
+    every.dispatchEvent(new Event('change', { bubbles: true }));
+    // Сторону говорит категория (Р-06): с доходной шаблон в необходимый
+    // доход не пойдёт вовсе, и проверять было бы нечего.
+    const category = [...document.querySelectorAll('select')].find((each) =>
+      [...each.options].some((option) => option.textContent.includes('Еда')));
+    const spend = [...category.options].find((option) => option.textContent.includes('Еда'));
+    set(category, spend.value);
+    category.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(800)
+  const yearly = await screen()
+  check('годовая регулярная завелась', has(yearly, 'раз в 12 месяцев'), line(yearly, 'Страховка'))
+
   await go('/')
   await sleep(700)
   const waiting = await screen()
+  // ── «Какой доход мне нужен» (Р-07, Р-27): каждое слагаемое названо.
+  //    Снимок снят после заведения шаблонов: до них доли быть не может.
+  check('есть блок «Какой доход мне нужен»', has(waiting, 'Какой доход мне нужен'), line(waiting, 'Какой доход'))
+  check(
+    'нужное стоит на обычном месяце и называет его',
+    /обычный месяц [^\n]*по \d+/.test(waiting),
+    line(waiting, 'обычный месяц '),
+  )
+  check(
+    'доля годовой регулярной названа отдельно, а не растворена в числе',
+    /плюс [^\n]* в месяц — доля \d+ регулярн/.test(waiting),
+    line(waiting, 'в месяц — доля'),
+  )
+  check(
+    'и сказано, хватает ли дохода',
+    has(waiting, 'не хватает') || has(waiting, 'хватает с запасом') || has(waiting, 'доход за этот месяц не внесён'),
+    line(waiting, 'доход этого месяца'),
+  )
+
   check(
     'приложение называет доход, которого ждали и не дождались',
     has(waiting, 'Доход внесён не весь') && has(waiting, 'Стипендия'),

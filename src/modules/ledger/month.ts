@@ -88,21 +88,30 @@ function decimalsOf(currencies: readonly Currency[], code: string): number | nul
  * Курс берётся на дату события, а не сегодняшний: вопрос «сколько это
  * стоило тогда», а не «сколько бы стоило сейчас».
  */
-function toBase(entry: Entry, data: MonthData): Converted {
-  const day = entry.date ?? entry.period?.to ?? ''
-  if (entry.money.currency === data.base) return { entry, amount: entry.money.amount }
+export function convertTo(
+  money: Money,
+  day: string,
+  data: MonthData,
+): { amount: number } | { missing: Missing } {
+  if (money.currency === data.base) return { amount: money.amount }
 
   const to = decimalsOf(data.currencies, data.base)
-  const from = decimalsOf(data.currencies, entry.money.currency)
+  const from = decimalsOf(data.currencies, money.currency)
   if (to === null || from === null) {
-    return { entry, missing: { currency: entry.money.currency, date: day, count: 1 } }
+    return { missing: { currency: money.currency, date: day, count: 1 } }
   }
 
-  const result = convert(entry.money, data.base, to, from, data.rates, day)
+  const result = convert(money, data.base, to, from, data.rates, day)
   if ('missing' in result) {
-    return { entry, missing: { currency: result.missing.from, date: result.missing.date, count: 1 } }
+    return { missing: { currency: result.missing.from, date: result.missing.date, count: 1 } }
   }
-  return { entry, amount: result.money.amount }
+  return { amount: result.money.amount }
+}
+
+function toBase(entry: Entry, data: MonthData): Converted {
+  const day = entry.date ?? entry.period?.to ?? ''
+  const result = convertTo(entry.money, day, data)
+  return 'missing' in result ? { entry, missing: result.missing } : { entry, amount: result.amount }
 }
 
 function sumOf(entries: readonly Entry[], data: MonthData): Sum {
@@ -400,10 +409,15 @@ export type Usual = {
 export function observations(
   data: MonthData,
   month: string,
-  count: number = USUAL_MONTHS,
-): { list: Observation[]; missing: Missing[] } {
+  options: { count?: number; without?: ReadonlySet<string> } = {},
+): { list: Observation[]; missing: Missing[]; excluded: number; periodsUncleaned: number } {
+  const count = options.count ?? USUAL_MONTHS
+  // Платежи по неежемесячным шаблонам выносятся из обычного месяца: они
+  // вернутся долей в необходимом доходе, и считать их дважды нельзя (Р-27).
+  const without = options.without ?? new Set<string>()
   const found: Observation[] = []
   const missing: Missing[] = []
+  let excluded = 0
 
   let cursor = month
   for (let step = 0; step < count; step++) {
@@ -413,7 +427,9 @@ export function observations(
     // наблюдение (Р-20). Считать оба значило бы усреднить неполный месяц
     // выписки вместе с целым периодом, который его же и накрывает.
     if (ownsMonth(totalsTouching(data.entries, cursor), cursor)) continue
-    const expenses = operationsOf(data.entries, cursor).filter((each) => each.kind === 'expense' && !each.special)
+    const all = operationsOf(data.entries, cursor).filter((each) => each.kind === 'expense' && !each.special)
+    const expenses = all.filter((each) => !(each.recurringId !== undefined && without.has(each.recurringId)))
+    excluded += all.length - expenses.length
     if (expenses.length === 0) continue
     const sum = sumOf(expenses, data)
     missing.push(...sum.missing)
@@ -445,7 +461,11 @@ export function observations(
     })
   }
 
-  return { list: found, missing }
+  // Итоги прежней таблицы вычистить нечем: у них нет ни категорий,
+  // ни пометок регулярных. Число названо, а не спрятано (Р-27).
+  const periodsUncleaned = without.size === 0 ? 0 : found.filter((each) => each.kind === 'period').length
+
+  return { list: found, missing, excluded, periodsUncleaned }
 }
 
 /** Расход промежутка, приведённый к месяцу в 30,44 дня (Р-12, п. 6). */
