@@ -1098,6 +1098,52 @@ async function scenario(profile) {
     line(waiting, 'месяцев с операциями'),
   )
 
+  // ── «Что улучшить» (Р-29): отчёт уезжает в беседу текстом, а не вызовом
+  //    платного API. Проверяется не кнопка, а то, что она кладёт в буфер.
+  check('есть блок «Что улучшить»', has(waiting, 'Что улучшить'), line(waiting, 'Что улучшить'))
+
+  // Буфер обмена в headless-браузере недоступен: подменяем его и ловим текст.
+  await run(`
+    (() => {
+      window.__copied = null;
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: (text) => { window.__copied = text; return Promise.resolve(); } },
+      });
+    })()
+  `)
+  await act(`byText('button', 'Скопировать отчёт').click();`)
+  await sleep(600)
+  const copied = await run('window.__copied')
+  const said = await screen()
+
+  check(
+    'кнопка кладёт отчёт в буфер и говорит об этом',
+    typeof copied === 'string' && copied.length > 0 && has(said, 'Отчёт скопирован'),
+    line(said, 'Отчёт скопирован'),
+  )
+  check(
+    'в отчёте есть месяц и итоги с основанием',
+    typeof copied === 'string' &&
+      copied.includes('# Деньги за') &&
+      copied.includes('## Итоги месяца') &&
+      /по \d+ операци/.test(copied),
+    typeof copied === 'string' ? copied.split('\n')[0] : String(copied),
+  )
+  // Без этого раздела беседа объяснит дыры в данных привычками человека.
+  check(
+    'и раздел «чего приложение не знает» — он в отчёте главный',
+    typeof copied === 'string' && copied.includes('## Чего приложение не знает'),
+    'раздел про незнание',
+  )
+  check(
+    'вопрос стоит после чисел и просит сомневаться',
+    typeof copied === 'string' &&
+      copied.indexOf('## Вопрос') > copied.indexOf('## Итоги месяца') &&
+      copied.includes('В чём ты сомневаешься'),
+    'вопрос в конце отчёта',
+  )
+
   check(
     'приложение называет доход, которого ждали и не дождались',
     has(waiting, 'Доход внесён не весь') && has(waiting, 'Стипендия'),

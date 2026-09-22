@@ -6,6 +6,8 @@ import { SYNCED_STORES } from '../app/model.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
 import { recordedThrough, type Recorded } from '../modules/ledger/entries.ts'
 import { needed, rareIds, type Need } from '../modules/ledger/need.ts'
+import { dueThisMonth } from '../modules/ledger/recurring.ts'
+import { monthReportText } from '../modules/ledger/report.ts'
 import { incomeNotEntered, type RecurringData } from '../modules/ledger/recurring.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
@@ -288,6 +290,26 @@ function Report({
 
       <OverUsualBlock report={over} names={names} show={show} />
 
+      <ReportCopy
+        text={() =>
+          monthReportText({
+            month,
+            base: data.base,
+            currencies: data.currencies,
+            report,
+            usual,
+            need,
+            growth,
+            categories: byCategory,
+            over,
+            recorded,
+            excluded: seen.excluded,
+            due: dueThisMonth(waiting, month),
+            names,
+          })
+        }
+      />
+
       <div className="block">
         <h2>Расход по месяцам</h2>
         {/* График, у которого нет ни одного столбика, рисует ось с делением
@@ -542,6 +564,43 @@ function NeedBlock({
           {enough >= 0 ? `хватает с запасом в ${show(enough)}` : `не хватает ${show(-enough)}`}
         </p>
       )}
+    </div>
+  )
+}
+
+/**
+ * «Что улучшить» (Р-07, Р-29): отчёт месяца и вопрос — в буфер, разбор —
+ * в беседе с Claude.
+ *
+ * Claude API отсюда не вызывается: он платный, а продукт тестируется
+ * бесплатно. Текст собирается по кнопке, а не при каждой перерисовке:
+ * он никому не нужен, пока его не попросили.
+ */
+function ReportCopy({ text }: { text: () => string }) {
+  const [note, setNote] = useState('')
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text())
+      setNote('Отчёт скопирован — вставьте его в беседу с Claude')
+    } catch {
+      setNote('Скопировать не вышло: браузер не дал доступ к буферу обмена')
+    }
+  }
+
+  return (
+    <div className="block">
+      <h2>Что улучшить</h2>
+      <p className="basis">
+        Приложение считает числа, а разбирает их беседа с Claude: она видит их все сразу и помнит
+        прошлые разговоры. Отчёт вместе с вопросом копируется в буфер — вставьте его в беседу.
+      </p>
+      <div className="row">
+        <button type="button" onClick={() => void copy()}>
+          Скопировать отчёт
+        </button>
+      </div>
+      {note && <p className="basis">{note}</p>}
     </div>
   )
 }
