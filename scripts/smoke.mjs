@@ -819,14 +819,22 @@ async function scenario(profile) {
   const PAST = JSON.stringify({
     format: 'zloty-import',
     version: 1,
+    // Второй банк, чья выписка кончилась раньше: по нему и считается,
+    // по какое число доведены записи (Р-24). Выписки приходят вразнобой,
+    // и это не выдуманный случай, а обычный.
+    accounts: [{ name: 'Зелёный банк', currency: 'RUB', kind: 'savings' }],
     entries: [
+      { kind: 'expense', account: 'Зелёный банк', amount: 300, date: '2026-09-10', category: 'Еда' },
       { kind: 'expense', account: 'Синий банк', amount: 1000, date: '2026-03-12', category: 'Еда' },
       { kind: 'expense', account: 'Синий банк', amount: 1000, date: '2026-04-12', category: 'Еда' },
       { kind: 'expense', account: 'Синий банк', amount: 1000, date: '2026-05-12', category: 'Еда' },
       { kind: 'expense', account: 'Синий банк', amount: 20000, date: '2026-03-20', category: 'Техника' },
       { kind: 'income', account: 'Синий банк', amount: 50, date: '2026-05-14', category: 'Кэшбэк' },
     ],
-    checks: [{ account: 'Синий банк', from: '2026-03-01', to: '2026-05-31', income: 50, expense: 23000 }],
+    checks: [
+      { account: 'Синий банк', from: '2026-03-01', to: '2026-05-31', income: 50, expense: 23000 },
+      { account: 'Зелёный банк', from: '2026-09-01', to: '2026-09-30', income: 0, expense: 300 },
+    ],
   })
 
   await go('/import')
@@ -871,10 +879,23 @@ async function scenario(profile) {
     firstOfMonth || /Месяц ещё идёт — прошло \d+ из \d+ дн/.test(usual),
     line(usual, 'Месяц ещё идёт'),
   )
+  // Выписка всегда отстаёт от календаря, и дни после последней операции —
+  // не дни без трат, а дни, которых в базе нет (Р-24).
+  check(
+    'экран называет, по какое число доведены записи, а не только прожитые дни',
+    firstOfMonth || (has(usual, 'записи доведены только по') && /не хватает \d+ дн/.test(usual)),
+    line(usual, 'записи доведены только по'),
+  )
+  check(
+    'и говорит, по скольким дням посчитан расход',
+    firstOfMonth || /Расход ниже посчитан по \d+ дн/.test(usual),
+    line(usual, 'Расход ниже посчитан'),
+  )
+
   check(
     'сравнение с обычным урезано до того же срока, а не досчитано до месяца',
-    firstOfMonth || (has(usual, 'а обычно к этому дню') && !has(usual, 'на сегодняшнем темпе')),
-    line(usual, 'обычно к этому дню'),
+    firstOfMonth || (has(usual, 'а обычно за такой же срок') && !has(usual, 'на сегодняшнем темпе')),
+    line(usual, 'обычно за такой же срок'),
   )
 
   // Слова про урезание стоят на месте и тогда, когда урезания нет: сторож
@@ -890,8 +911,8 @@ async function scenario(profile) {
         return found ? Number(found[1].replace(',', '.')) : null;
       };
       const whole = number(block.querySelector('.big')?.textContent ?? '');
-      const line = [...block.querySelectorAll('p')].find((el) => el.textContent.includes('к этому дню'));
-      const part = line ? number(line.textContent.split('к этому дню')[1] ?? '') : null;
+      const line = [...block.querySelectorAll('p')].find((el) => el.textContent.includes('за такой же срок'));
+      const part = line ? number(line.textContent.split('за такой же срок')[1] ?? '') : null;
       return { whole, part };
     })()
   `)
@@ -907,7 +928,7 @@ async function scenario(profile) {
   )
   check(
     'и отклонение по категории считается от урезанного обычного',
-    firstOfMonth || /обычно .+ к этому дню — по \d+ месяц/.test(usual),
+    firstOfMonth || /обычно .+ за такой же срок — по \d+ месяц/.test(usual),
     line(usual, 'встречалась в'),
   )
 

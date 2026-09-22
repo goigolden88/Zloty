@@ -181,24 +181,48 @@ export function ownsMonth(totals: readonly Entry[], month: string): boolean {
 
 // ─── Месяц, который ещё идёт ───────────────────────────────────────────────
 
-/** Сколько дней месяца прошло и сколько их всего. */
-export type Running = { passed: number; total: number }
+/** Сколько дней месяца записано, сколько прошло по календарю и сколько всего. */
+export type Running = {
+  /** Дней месяца, по которые доведены записи. Ими и считается расход. */
+  passed: number
+  /** Дней месяца, прошедших по календарю. */
+  elapsed: number
+  /** Всего дней в месяце. */
+  total: number
+}
 
 /**
- * Идёт ли месяц ещё — и сколько его дней прошло (Р-22).
+ * Насколько месяц прожит — и насколько он записан (Р-22, Р-24).
  *
- * Null — месяц кончился: его можно сравнивать с обычным целиком.
- * `passed` равен нулю у месяца, который ещё не начался.
+ * Это разные числа, и в этом всё дело. Календарь говорит, что прошло
+ * двадцать два дня; выписки доведены до восемнадцатого. Сравнивать расход
+ * надо по записанному сроку, а не по прожитому: иначе четыре дня,
+ * которых в базе нет, считаются днями без трат.
  *
- * `today` приходит аргументом, а не берётся из часов: расчёт остаётся
- * чистой функцией, и тест может встать в любой день.
+ * Null — сравнивать можно целиком: месяц кончился и записан до конца.
+ *
+ * `today` и `through` приходят аргументами, а не берутся из часов и базы:
+ * расчёт остаётся чистой функцией, и тест может встать в любой день.
  */
-export function monthShare(month: string, today: string): Running | null {
+export function monthShare(month: string, today: string, through?: string | null): Running | null {
   const total = daysInMonth(month)
   const now = monthOf(today)
-  if (month < now) return null
-  if (month > now) return { passed: 0, total }
-  return { passed: Number(today.slice(8, 10)), total }
+  const elapsed = month < now ? total : month > now ? 0 : Number(today.slice(8, 10))
+
+  // Не сказали, по какое число доведены записи, — считаем, что до сегодня:
+  // это прежнее поведение, и оно остаётся у тестов и у вызовов без базы.
+  const recorded = through === undefined || through === null ? elapsed : daysOf(month, through, total)
+  const passed = Math.min(recorded, elapsed)
+
+  if (month < now && passed >= total) return null
+  return { passed, elapsed, total }
+}
+
+/** Сколько дней месяца накрыто датой `through`. */
+function daysOf(month: string, through: string, total: number): number {
+  if (through < `${month}-01`) return 0
+  if (through > lastDayOf(month)) return total
+  return Number(through.slice(8, 10))
 }
 
 /**
@@ -255,7 +279,12 @@ export type MonthReport = {
  */
 export type SavedProblem = 'no-income' | 'covered' | null
 
-export function monthReport(data: MonthData, month: string, today?: string): MonthReport {
+export function monthReport(
+  data: MonthData,
+  month: string,
+  today?: string,
+  through?: string | null,
+): MonthReport {
   const operations = operationsOf(data.entries, month)
 
   const income = sumOf(operations.filter((each) => each.kind === 'income'), data)
@@ -295,7 +324,7 @@ export function monthReport(data: MonthData, month: string, today?: string): Mon
     periodTotals,
     coveredDays,
     monthDays,
-    running: today === undefined ? null : monthShare(month, today),
+    running: today === undefined ? null : monthShare(month, today, through),
   }
 }
 
@@ -487,7 +516,7 @@ export type OverUsualReport = {
 export function overUsual(
   data: MonthData,
   month: string,
-  options: { count?: number; shown?: number; least?: number; today?: string } = {},
+  options: { count?: number; shown?: number; least?: number; today?: string; through?: string | null } = {},
 ): OverUsualReport {
   const count = options.count ?? USUAL_MONTHS
   const shown = options.shown ?? OVER_USUAL_SHOWN
@@ -495,7 +524,8 @@ export function overUsual(
   // Месяц ещё идёт — обычное урезается до прожитого срока (Р-22). Иначе
   // двадцатого числа каждая категория оказывается «ниже обычного», и список
   // отклонений говорит только о том, что месяц не кончился.
-  const running = options.today === undefined ? null : monthShare(month, options.today)
+  const running =
+    options.today === undefined ? null : monthShare(month, options.today, options.through)
 
   const past: string[] = []
   let cursor = month

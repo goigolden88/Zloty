@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CHANGES } from '../changes.ts'
+import type { Account } from '../app/model.ts'
 import { SYNCED_STORES } from '../app/model.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
+import { recordedThrough } from '../modules/ledger/entries.ts'
 import { incomeNotEntered, type RecurringData } from '../modules/ledger/recurring.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
@@ -123,6 +125,7 @@ export function Month() {
               accounts: ledger.data.accounts,
               entries: entries.all,
             }}
+            accounts={ledger.data.accounts}
           />
         </>
       )}
@@ -137,6 +140,7 @@ function Report({
   goal,
   names,
   waiting,
+  accounts,
 }: {
   month: string
   onMonth: (month: string) => void
@@ -144,12 +148,17 @@ function Report({
   goal: number | null
   names: Map<string, string>
   waiting: RecurringData
+  accounts: readonly Account[]
 }) {
   const now = today()
-  const report = monthReport(data, month, now)
+  // По какое число доведены записи — тем же правилом, каким промпт импорта
+  // решает, с какого дня брать выписку (Р-24). Календарь и записи расходятся,
+  // и сравнивать надо по записанному.
+  const through = recordedThrough(data.entries, accounts)
+  const report = monthReport(data, month, now, through)
   const seen = observations(data, month)
   const usual = usualMonth(seen.list, seen.missing)
-  const over = overUsual(data, month, { today: now })
+  const over = overUsual(data, month, { today: now, through })
   const bars = monthlyExpenses(data, month, BARS)
 
   const show = (amount: number) =>
@@ -167,16 +176,7 @@ function Report({
         </button>
       </div>
 
-      {report.running !== null && report.running.passed > 0 && (
-        <p className="basis">
-          Месяц ещё идёт — прошло {report.running.passed} из {report.running.total}{' '}
-          {plural(report.running.total, ['дня', 'дней', 'дней'])}. Сравнения с обычным месяцем ниже
-          урезаны до этого же срока.
-        </p>
-      )}
-      {report.running !== null && report.running.passed === 0 && (
-        <p className="basis">Месяц ещё не начался — сравнивать пока нечего.</p>
-      )}
+      <RunningNote running={report.running} through={through} />
 
       {/* Главный ответ — первым. Всё остальное объясняет его. */}
       <div className="block">
@@ -303,6 +303,42 @@ function Report({
 }
 
 /**
+ * Насколько месяц прожит и насколько записан (Р-22, Р-24).
+ *
+ * Это два разных числа, и пока они расходятся, сравнение с обычным месяцем
+ * стоит на записанном сроке, а не на календарном. Молчать об этом нельзя:
+ * дни, которых в базе нет, иначе читаются как дни без трат.
+ */
+function RunningNote({ running, through }: { running: Running | null; through: string | null }) {
+  if (running === null) return null
+
+  const { passed, elapsed, total } = running
+  const behind = elapsed - passed
+
+  if (elapsed === 0) return <p className="basis">Месяц ещё не начался — сравнивать пока нечего.</p>
+
+  const lived =
+    elapsed < total
+      ? `Месяц ещё идёт — прошло ${elapsed} из ${total} ${plural(total, ['дня', 'дней', 'дней'])}.`
+      : `Месяц кончился, ${total} ${plural(total, ['день', 'дня', 'дней'])}.`
+
+  if (behind === 0) {
+    return <p className="basis">{lived} Сравнения с обычным месяцем ниже урезаны до этого же срока.</p>
+  }
+
+  return (
+    <p className="error">
+      {lived} Но записи доведены только по {through === null ? 'ничему' : formatDate(through)}
+      {passed === 0
+        ? ' — за этот месяц их нет вовсе'
+        : `: не хватает ${behind} ${plural(behind, ['дня', 'дней', 'дней'])}`}
+      . Расход ниже посчитан по {passed} {plural(passed, ['дню', 'дням', 'дням'])}, и обычный месяц
+      урезан до того же срока — иначе незагруженные дни считались бы днями без трат.
+    </p>
+  )
+}
+
+/**
  * Норма сбережений словами, которые читаются (Р-23).
  *
  * Доля от неполного дохода уходит в сотни процентов и говорит о данных,
@@ -387,10 +423,12 @@ function ThisMonth({
   }
   if (running.passed === 0) return null
 
+  // «За прошедшие 22 дня» было бы неправдой там, где записей всего за 18
+  // (Р-24): считается записанный срок, им и называется.
   return (
     <p className="basis">
-      за прошедшие {running.passed} {plural(running.passed, ['день', 'дня', 'дней'])} — {show(now)},
-      а обычно к этому дню — {show(against)}: {word} на {delta}
+      за {running.passed} {plural(running.passed, ['день', 'дня', 'дней'])} месяца — {show(now)},
+      а обычно за такой же срок — {show(against)}: {word} на {delta}
     </p>
   )
 }
@@ -445,7 +483,7 @@ function OverUsualBlock({
                 {nameOf(row.categoryId)}
                 <div className="basis">
                   обычно {show(row.usual)}
-                  {report.running !== null && ' к этому дню'} — по {row.months}{' '}
+                  {report.running !== null && ' за такой же срок'} — по {row.months}{' '}
                   {plural(row.months, ['месяцу', 'месяцам', 'месяцам'])}, встречалась в {row.seen} из{' '}
                   {row.months}
                 </div>
