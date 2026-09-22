@@ -25,7 +25,7 @@
  * — **Примеры выдуманные:** промпт уезжает к тому, с кем идёт беседа.
  */
 
-import { formatDate, plural } from '../../shared/core/dates.ts'
+import { formatDate, nowIso, plural } from '../../shared/core/dates.ts'
 import {
   absent,
   dayOf,
@@ -991,14 +991,44 @@ function turnoverOn(entries: readonly Entry[], check: Check): { income: number; 
  * Итоги периодов сверка не трогает: у них нет даты, и переносятся они
  * не выпиской (Р-14).
  */
+/**
+ * Отметки «выписка доведена по» — по сошедшимся сверкам (Р-26).
+ *
+ * Назад отметка не откатывается: загрузили старую выписку поверх свежей —
+ * счёт не должен «разучиться» тому, что уже знает.
+ *
+ * `pending` — счета, заведённые этим же файлом: отметка должна лечь на них,
+ * а не на прежнюю копию из базы, иначе одна из двух записей потеряется.
+ */
+export function loadedThroughUpdates(
+  loaded: readonly { accountId: string; through: string }[],
+  data: LedgerImportData,
+  pending: readonly Account[] = [],
+): Account[] {
+  const result = new Map<string, Account>()
+
+  for (const { accountId, through } of loaded) {
+    const current =
+      result.get(accountId) ??
+      pending.find((each) => each.id === accountId) ??
+      data.accounts.find((each) => each.id === accountId)
+    if (!current || current.ledgerOnly) continue
+    if (current.loadedThrough !== undefined && current.loadedThrough >= through) continue
+    result.set(accountId, { ...current, loadedThrough: through, updatedAt: nowIso() })
+  }
+
+  return [...result.values()]
+}
+
 export function applyChecks(
   checks: readonly Check[],
   incoming: readonly Entry[],
   data: LedgerImportData,
-): { kept: Entry[]; issues: Issue[] } {
+): { kept: Entry[]; issues: Issue[]; loaded: { accountId: string; through: string }[] } {
   const section = checksImportSpec.section
   const issues: Issue[] = []
   const passed = new Set<string>()
+  const loaded: { accountId: string; through: string }[] = []
 
   // Считается по всему, что окажется в базе: уже лежащие записи плюс новые.
   // Иначе повторная загрузка той же выписки не сошлась бы ни разу — её
@@ -1048,6 +1078,9 @@ export function applyChecks(
 
     if (wrong.length === 0) {
       passed.add(check.accountId)
+      // Выписка сошлась — значит она и вправду доведена по свой конец
+      // периода (Р-26). Это единственное место, где такой факт известен.
+      loaded.push({ accountId: check.accountId, through: check.to })
       continue
     }
     issues.push({
@@ -1106,7 +1139,7 @@ export function applyChecks(
     })
   }
 
-  return { kept, issues }
+  return { kept, issues, loaded }
 }
 
 function allowed(entry: Entry, passed: ReadonlySet<string>): boolean {

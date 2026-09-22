@@ -12,8 +12,10 @@ import {
   importEntries,
   importRates,
   ledgerPromptNotes,
+  loadedThroughUpdates,
   promptSamples,
   replacedTotals,
+  type Check,
   type LedgerImportData,
 } from './import.ts'
 
@@ -718,5 +720,79 @@ describe('операция вне периода выписки объявляе
     const fields = checksImportSpec.fields.join('\n')
     expect(fields).toContain('внутри этого же банка')
     expect(fields).toContain('раньше «from» или позже «to»')
+  })
+})
+
+describe('отметка «выписка доведена по» (Р-26)', () => {
+  const bank: Account = {
+    id: 'acc-mark',
+    updatedAt: AT,
+    name: 'Синий банк',
+    currency: 'RUB',
+    kind: 'savings',
+    order: 0,
+  }
+
+  function data(accounts: Account[]): LedgerImportData {
+    return { ...base(), accounts }
+  }
+
+  it('сошедшаяся сверка помечает счёт концом своего периода', () => {
+    const marks = loadedThroughUpdates([{ accountId: bank.id, through: '2026-09-18' }], data([bank]))
+    expect(marks).toHaveLength(1)
+    expect(marks[0]?.loadedThrough).toBe('2026-09-18')
+  })
+
+  // Загрузили старую выписку поверх свежей — счёт не должен «разучиться»
+  // тому, что уже знает.
+  it('назад отметка не откатывается', () => {
+    const known: Account = { ...bank, loadedThrough: '2026-09-18' }
+    expect(loadedThroughUpdates([{ accountId: bank.id, through: '2026-08-31' }], data([known]))).toEqual([])
+  })
+
+  it('вперёд — двигается', () => {
+    const known: Account = { ...bank, loadedThrough: '2026-09-18' }
+    const marks = loadedThroughUpdates([{ accountId: bank.id, through: '2026-09-22' }], data([known]))
+    expect(marks[0]?.loadedThrough).toBe('2026-09-22')
+  })
+
+  it('счёт истории отметки не получает: выписок на него не грузят', () => {
+    const table: Account = { ...bank, ledgerOnly: true }
+    expect(loadedThroughUpdates([{ accountId: bank.id, through: '2026-09-18' }], data([table]))).toEqual([])
+  })
+
+  // Счёт, заведённый этим же файлом, ещё не в базе: отметка обязана лечь
+  // на него, иначе одна из двух записей потеряется.
+  it('отметка ложится на счёт, заведённый этим же файлом', () => {
+    const marks = loadedThroughUpdates([{ accountId: bank.id, through: '2026-09-18' }], data([]), [bank])
+    expect(marks).toHaveLength(1)
+    expect(marks[0]?.id).toBe(bank.id)
+  })
+
+  function check(over: Partial<Check> = {}): Check {
+    return {
+      accountId: bank.id,
+      accountName: bank.name,
+      currency: 'RUB',
+      from: '2026-09-01',
+      to: '2026-09-18',
+      opening: 0,
+      closing: 0,
+      income: null,
+      expense: null,
+      skippedIn: 0,
+      skippedOut: 0,
+      ...over,
+    }
+  }
+
+  it('сошедшаяся сверка отдаёт конец своего периода', () => {
+    const { loaded } = applyChecks([check()], [], data([bank]))
+    expect(loaded).toEqual([{ accountId: bank.id, through: '2026-09-18' }])
+  })
+
+  it('несошедшаяся сверка отметки не даёт', () => {
+    const { loaded } = applyChecks([check({ opening: 100000 })], [], data([bank]))
+    expect(loaded).toEqual([])
   })
 })

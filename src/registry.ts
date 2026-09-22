@@ -41,6 +41,7 @@ import {
   importEntries,
   importRates,
   ledgerSpecs,
+  loadedThroughUpdates,
   ratesImportSpec,
   replacedTotals,
   type LedgerImportData,
@@ -182,11 +183,21 @@ function withChecks(plan: Plan, raw: unknown, ledger: LedgerImportData): Plan {
   if (incoming.length === 0) return plan
 
   const { checks, issues } = importChecks(raw ?? [], ledger)
-  const { kept, issues: refused } = applyChecks(checks, incoming, ledger)
+  const { kept, issues: refused, loaded } = applyChecks(checks, incoming, ledger)
+
+  // Сошедшаяся сверка — единственное место, где известно, по какое число
+  // доведена выписка счёта (Р-26). Отметка ложится на счёт, в том числе
+  // на заведённый этим же файлом.
+  const pending = plan.writes.accounts ?? []
+  const marked = loadedThroughUpdates(loaded, ledger, pending)
+  const accounts = [
+    ...pending.filter((each) => !marked.some((mark) => mark.id === each.id)),
+    ...marked,
+  ]
 
   return {
     ...plan,
-    writes: { ...plan.writes, entries: kept },
+    writes: { ...plan.writes, entries: kept, ...(accounts.length > 0 ? { accounts } : {}) },
     added: plan.added.map((each) =>
       each.forms === ENTRY_FORMS ? { ...each, count: each.count - (incoming.length - kept.length) } : each,
     ).filter((each) => each.count > 0),

@@ -154,7 +154,7 @@ function Report({
   // По какое число доведены записи — тем же правилом, каким промпт импорта
   // решает, с какого дня брать выписку (Р-24). Календарь и записи расходятся,
   // и сравнивать надо по записанному.
-  const recorded = recordedThrough(data.entries, accounts)
+  const recorded = recordedThrough(accounts)
   const report = monthReport(data, month, now, recorded?.day ?? null)
   const seen = observations(data, month)
   const usual = usualMonth(seen.list, seen.missing)

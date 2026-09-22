@@ -340,60 +340,35 @@ export function lastDayOn(entries: readonly Entry[], accountId: string): string 
 }
 
 /**
- * По какое число доведены записи целиком (Р-24).
+ * По какое число доведены выписки целиком (Р-26).
  *
- * Тем же правилом, каким промпт импорта решает, с какого дня брать выписку
- * (Р-12, п. 5): у каждого счёта — день его последней операции. Целиком месяц
- * записан по тот день, до которого доведены **все** счета, то есть по
- * наименьшему из них: выписки приходят вразнобой, и пока отстал хотя бы
- * один, расход этих дней неизвестен.
+ * **Это факт, а не вывод.** Выписка сама говорит, по какой день она
+ * составлена, — раздел `checks` (Р-16), — и импорт записывает это на счёт,
+ * когда сверка сошлась. Выводить срок из записей нельзя: две попытки это
+ * доказали. Счёт, на котором в этом месяце только переводили, по записям
+ * выглядит отставшим на три недели, хотя выписка загружена до вчера.
  *
- * Счета истории (`ledgerOnly`) не в счёт: на них лежат итоги прежней таблицы,
- * и их `period.to` утянул бы ответ на год назад. Счёт без единой операции —
- * тоже: наличные выписки не имеют и не будут (Р-12).
- *
- * **Это вывод, а не факт:** «последняя запись 18-го» может значить и «дальше
- * не грузил», и «дальше не тратил». Тот же вывод уже делает промпт, и
- * на нём стоит вся дозагрузка выписок; экран его только называет.
+ * Берётся счёт, отставший сильнее всех: пока отстал хотя бы один, расход
+ * этих дней неизвестен. Счета без отметки — наличные и всё, что вносится
+ * руками, — срока не задают: выписок по ним не бывает.
  */
-export type Recorded = {
-  /** День, по который доведены все счета. */
-  day: string
-  /** Счёт, который отстал сильнее всех: его и надо догрузить. */
-  account: Account
-}
-
-export function recordedThrough(
-  entries: readonly Entry[],
-  accounts: readonly Account[],
-): Recorded | null {
+export function recordedThrough(accounts: readonly Account[]): Recorded | null {
   let earliest: Recorded | null = null
 
   for (const account of accounts) {
     if (account.deleted || account.archived || account.ledgerOnly) continue
-    const last = lastDatedDayOn(entries, account.id)
-    if (last === null) continue
-    if (earliest === null || last < earliest.day) earliest = { day: last, account }
+    const day = account.loadedThrough
+    if (!day) continue
+    if (earliest === null || day < earliest.day) earliest = { day, account }
   }
 
   return earliest
 }
 
-/**
- * Последний день операции с датой. В отличие от `lastDayOn`, итоги периодов
- * не считаются.
- *
- * Итог периода говорит «за этот промежуток потрачено столько-то», а не «этот
- * день записан». Счёт прежней таблицы состоит из одних таких итогов, и его
- * `period.to` утягивал срок на недели назад: экран объявлял месяц записанным
- * по одному дню, хотя выписки доведены до восемнадцатого.
- */
-function lastDatedDayOn(entries: readonly Entry[], accountId: string): string | null {
-  let last: string | null = null
-  for (const entry of entries) {
-    if (entry.deleted || entry.accountId !== accountId || entry.kind === 'transfer') continue
-    if (!entry.date) continue
-    if (last === null || entry.date > last) last = entry.date
-  }
-  return last
+export type Recorded = {
+  /** День, по который доведены все выписки. */
+  day: string
+  /** Счёт, чья выписка отстала сильнее всех: его и надо догрузить. */
+  account: Account
 }
+

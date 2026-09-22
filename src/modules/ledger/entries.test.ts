@@ -336,80 +336,42 @@ describe('с какого дня брать следующую выписку (�
   })
 })
 
-describe('по какое число доведены записи (Р-24)', () => {
-  const blue: Account = { id: 'a1', updatedAt: AT, name: 'Синий банк', currency: 'RUB', kind: 'savings', order: 0 }
-  const green: Account = { id: 'a2', updatedAt: AT, name: 'Зелёный банк', currency: 'RUB', kind: 'savings', order: 1 }
-  const old: Account = {
-    id: 'a3',
+describe('по какое число доведены выписки (Р-26)', () => {
+  const blue: Account = {
+    id: 'a1',
     updatedAt: AT,
-    name: 'Старая таблица',
+    name: 'Синий банк',
     currency: 'RUB',
     kind: 'savings',
-    ledgerOnly: true,
-    order: 2,
+    loadedThrough: '2026-09-18',
+    order: 0,
   }
+  const green: Account = { ...blue, id: 'a2', name: 'Зелёный банк', loadedThrough: '2026-09-16' }
+  /** Наличные: выписки нет и не будет, срока не задают. */
+  const cash: Account = { ...blue, id: 'a3', name: 'Наличные', loadedThrough: undefined }
+  const old: Account = { ...blue, id: 'a4', name: 'Таблица', ledgerOnly: true, loadedThrough: '2025-01-01' }
 
-  function spend(accountId: string, date: string): Entry {
-    return {
-      id: `e-${accountId}-${date}`,
-      updatedAt: AT,
-      kind: 'expense',
-      accountId,
-      money: { amount: 10000, currency: 'RUB' },
-      date,
-      categoryId: 'c1',
-    }
-  }
-
-  // Пока отстал хотя бы один счёт, расход этих дней неизвестен. Счёт
+  // Пока отстала хотя бы одна выписка, расход этих дней неизвестен. Счёт
   // называется: без имени «доведено по шестнадцатое» — загадка.
-  it('берётся счёт, отставший сильнее всех, и он назван', () => {
-    const list = [spend('a1', '2026-09-18'), spend('a2', '2026-09-16')]
-    const found = recordedThrough(list, [blue, green])
+  it('берётся выписка, отставшая сильнее всех, и счёт назван', () => {
+    const found = recordedThrough([blue, green])
     expect(found?.day).toBe('2026-09-16')
     expect(found?.account.name).toBe('Зелёный банк')
   })
 
-  it('счёт истории не тянет ответ на год назад', () => {
-    const list: Entry[] = [
-      spend('a1', '2026-09-18'),
-      {
-        id: 'e-old',
-        updatedAt: AT,
-        kind: 'expense',
-        accountId: 'a3',
-        money: { amount: 10000, currency: 'RUB' },
-        period: { from: '2025-09-01', to: '2025-10-01' },
-      },
-    ]
-    expect(recordedThrough(list, [blue, old])?.day).toBe('2026-09-18')
+  it('счёт без выписок срока не задаёт', () => {
+    expect(recordedThrough([blue, cash])?.day).toBe('2026-09-18')
   })
 
-  // Итог периода говорит «за промежуток потрачено столько-то», а не «этот
-  // день записан». Счёт прежней таблицы состоит из одних таких итогов,
-  // и его `period.to` утягивал срок на недели назад — даже когда пометку
-  // «счёт истории» на нём забыли поставить.
-  it('итог периода сроку не указ, даже если пометки «счёт истории» нет', () => {
-    const table: Account = { ...old, ledgerOnly: undefined }
-    const list: Entry[] = [
-      spend('a1', '2026-09-18'),
-      {
-        id: 'e-period',
-        updatedAt: AT,
-        kind: 'expense',
-        accountId: 'a3',
-        money: { amount: 10000, currency: 'RUB' },
-        period: { from: '2026-08-01', to: '2026-09-01' },
-      },
-    ]
-    expect(recordedThrough(list, [blue, table])?.day).toBe('2026-09-18')
+  it('счёт истории не тянет срок на год назад', () => {
+    expect(recordedThrough([blue, old])?.day).toBe('2026-09-18')
   })
 
-  it('счёт без операций молчит: у наличных выписки нет и не будет', () => {
-    expect(recordedThrough([spend('a1', '2026-09-18')], [blue, green])?.day).toBe('2026-09-18')
+  it('архивный счёт молчит', () => {
+    expect(recordedThrough([blue, { ...green, archived: true }])?.day).toBe('2026-09-18')
   })
 
-  it('операций нет вовсе — ответа нет, а не сегодняшний день', () => {
-    expect(recordedThrough([], [blue, green])).toBeNull()
+  it('выписок не грузили вовсе — срока нет, и месяц считается по календарю', () => {
+    expect(recordedThrough([cash])).toBeNull()
   })
 })
