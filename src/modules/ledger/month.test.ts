@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { Currency, Entry, Rate } from '../../app/model.ts'
 import {
   DAYS_IN_MONTH,
+  growthByCategory,
+  growthOf,
+  GROWTH_MIN,
   monthlyExpenses,
   monthReport,
   monthShare,
@@ -15,6 +18,7 @@ import {
   usualMonth,
   USUAL_MONTHS,
   type MonthData,
+  type Observation,
 } from './month.ts'
 
 /** Суммы и категории выдуманы: код публичный (CLAUDE.md, «Личные данные»). */
@@ -506,6 +510,138 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
       elapsed: 22,
       total: 30,
     })
+  })
+})
+
+describe('рост обычного месяца (Р-28)', () => {
+  function seen(monthly: number[]): Observation[] {
+    return monthly.map((amount, at) => ({
+      kind: 'month' as const,
+      label: `2026-${String(at + 1).padStart(2, '0')}`,
+      end: `2026-${String(at + 1).padStart(2, '0')}-28`,
+      monthly: amount,
+    }))
+  }
+
+  it('поздняя половина против ранней, обе названы числом', () => {
+    const growth = growthOf(seen([100000, 100000, 120000, 120000]))
+    expect(growth?.early).toBe(100000)
+    expect(growth?.late).toBe(120000)
+    expect(growth?.delta).toBe(20000)
+    expect(growth?.share).toBeCloseTo(0.2)
+    expect(growth?.earlyCount).toBe(2)
+    expect(growth?.lateCount).toBe(2)
+  })
+
+  it('наблюдений меньше порога — роста нет, а не ноль', () => {
+    expect(GROWTH_MIN).toBe(4)
+    expect(growthOf(seen([100000, 100000, 120000]))).toBeNull()
+  })
+
+  // Среднее наблюдение попало бы в одну из половин и перекосило обе.
+  it('при нечётном числе среднее выбрасывается, и это названо', () => {
+    const growth = growthOf(seen([100000, 100000, 999999, 120000, 120000]))
+    expect(growth?.early).toBe(100000)
+    expect(growth?.late).toBe(120000)
+    expect(growth?.dropped).toBe(1)
+  })
+
+  it('стало дешевле — рост отрицательный, а не спрятан', () => {
+    const growth = growthOf(seen([200000, 200000, 100000, 100000]))
+    expect(growth?.delta).toBe(-100000)
+    expect(growth?.share).toBeCloseTo(-0.5)
+  })
+
+  it('ранняя половина нулевая — доли нет, делить не на что', () => {
+    const growth = growthOf(seen([0, 0, 100000, 100000]))
+    expect(growth?.share).toBeNull()
+    expect(growth?.delta).toBe(100000)
+  })
+
+  // Наблюдения приходят вперемешку: месяцы отдельно, периоды отдельно.
+  it('наблюдения выстраиваются по дате конца, а не по порядку в списке', () => {
+    const mixed: Observation[] = [
+      { kind: 'period', label: 'поздний', end: '2026-08-31', monthly: 120000 },
+      { kind: 'month', label: '2026-01', end: '2026-01-31', monthly: 100000 },
+      { kind: 'period', label: 'ранний', end: '2026-02-28', monthly: 100000 },
+      { kind: 'month', label: '2026-07', end: '2026-07-31', monthly: 120000 },
+    ]
+    const growth = growthOf(mixed)
+    expect(growth?.early).toBe(100000)
+    expect(growth?.late).toBe(120000)
+  })
+
+  it('половины называются месяцами, а не числом наблюдений', () => {
+    const growth = growthOf(seen([100000, 100000, 120000, 120000]))
+    expect(growth?.earlyLabel).toContain('январь')
+    expect(growth?.lateLabel).toContain('апрель')
+  })
+})
+
+describe('рост по категориям (Р-28)', () => {
+  /** Четыре месяца: еда дорожает, транспорт дешевеет. */
+  const list = [
+    entry({ kind: 'expense', amount: 100000, date: '2026-05-10', categoryId: 'food' }),
+    entry({ kind: 'expense', amount: 100000, date: '2026-06-10', categoryId: 'food' }),
+    entry({ kind: 'expense', amount: 150000, date: '2026-07-10', categoryId: 'food' }),
+    entry({ kind: 'expense', amount: 150000, date: '2026-08-10', categoryId: 'food' }),
+    entry({ kind: 'expense', amount: 80000, date: '2026-05-11', categoryId: 'ride' }),
+    entry({ kind: 'expense', amount: 80000, date: '2026-06-11', categoryId: 'ride' }),
+    entry({ kind: 'expense', amount: 40000, date: '2026-07-11', categoryId: 'ride' }),
+    entry({ kind: 'expense', amount: 40000, date: '2026-08-11', categoryId: 'ride' }),
+  ]
+
+  it('подорожавшее и подешевевшее считаются обе стороны', () => {
+    const { rows, months } = growthByCategory(data(list), '2026-09')
+    expect(months).toBe(4)
+    const food = rows.find((each) => each.categoryId === 'food')
+    const ride = rows.find((each) => each.categoryId === 'ride')
+    expect(food?.early).toBe(100000)
+    expect(food?.late).toBe(150000)
+    expect(food?.share).toBeCloseTo(0.5)
+    expect(ride?.delta).toBe(-40000)
+  })
+
+  // «Появилась» и «подорожала» — разные вещи, и деление на ноль второй
+  // из них не заменяет.
+  it('категория, которой нет в одной из половин, в рост не идёт', () => {
+    const fresh = [...list, entry({ kind: 'expense', amount: 500000, date: '2026-08-12', categoryId: 'vet' })]
+    const { rows } = growthByCategory(data(fresh), '2026-09')
+    expect(rows.some((each) => each.categoryId === 'vet')).toBe(false)
+  })
+
+  // Обратный случай: была раньше, пропала теперь. Делить нечего,
+  // и «перестал тратить» — не «подешевело».
+  it('категория, пропавшая в поздней половине, в рост не идёт', () => {
+    const gone = [...list, entry({ kind: 'expense', amount: 500000, date: '2026-05-12', categoryId: 'gym' })]
+    const { rows } = growthByCategory(data(gone), '2026-09')
+    expect(rows.some((each) => each.categoryId === 'gym')).toBe(false)
+  })
+
+  it('месяцев меньше порога — строк нет, и число месяцев названо', () => {
+    const thin = list.filter((each) => !each.date?.startsWith('2026-05'))
+    const { rows, months } = growthByCategory(data(thin), '2026-09')
+    expect(rows).toEqual([])
+    expect(months).toBe(3)
+  })
+
+  // Итоги прежней таблицы по категориям не разложены, и месяц, которым
+  // владеет период, своих чисел не имеет (Р-20).
+  it('месяц, которым владеет период, месяцем для роста не считается', () => {
+    const covered = [
+      ...list,
+      entry({ kind: 'expense', amount: 900000, period: { from: '2026-08-01', to: '2026-09-01' } }),
+    ]
+    expect(growthByCategory(data(covered), '2026-09').months).toBe(3)
+  })
+
+  it('платежи по редким шаблонам в рост по категориям не идут', () => {
+    const withRare = [
+      ...list,
+      entry({ kind: 'expense', amount: 1200000, date: '2026-08-15', categoryId: 'food', recurringId: 'r1' }),
+    ]
+    const { rows } = growthByCategory(data(withRare), '2026-09', { without: new Set(['r1']) })
+    expect(rows.find((each) => each.categoryId === 'food')?.late).toBe(150000)
   })
 })
 

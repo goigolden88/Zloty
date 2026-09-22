@@ -21,7 +21,7 @@
  * — **Обычный месяц — без особых трат** (Р-05, Р-07).
  */
 
-import { daysBetween, lastDayOf, monthOf, periodDays } from '../../shared/core/dates.ts'
+import { daysBetween, formatMonth, lastDayOf, monthOf, periodDays } from '../../shared/core/dates.ts'
 import type { Currency, Entry, Money, Rate } from '../../app/model.ts'
 import { convert } from '../money/rates.ts'
 
@@ -387,6 +387,8 @@ export type Observation = {
   kind: 'month' | 'period'
   /** Чем это называть человеку: «2026-08» или «05.01.2026 — 14.02.2026». */
   label: string
+  /** Последний день наблюдения, ГГГГ-ММ-ДД: по нему они выстраиваются в ряд. */
+  end: string
   /** Расход, приведённый к месяцу, в базовой валюте. */
   monthly: number
 }
@@ -433,7 +435,9 @@ export function observations(
     if (expenses.length === 0) continue
     const sum = sumOf(expenses, data)
     missing.push(...sum.missing)
-    if (sum.entries > 0) found.push({ kind: 'month', label: cursor, monthly: sum.amount })
+    if (sum.entries > 0) {
+      found.push({ kind: 'month', label: cursor, end: lastDayOf(cursor), monthly: sum.amount })
+    }
   }
 
   // Итоги периодов — тоже наблюдения: на них стоит вся история прежней
@@ -457,6 +461,7 @@ export function observations(
     found.push({
       kind: 'period',
       label: `${period.from} — ${period.to}`,
+      end: period.to,
       monthly: perMonth(result.amount, period),
     })
   }
@@ -486,6 +491,171 @@ export function usualMonth(list: readonly Observation[], missing: readonly Missi
     months: list.filter((each) => each.kind === 'month').length,
     periods: list.filter((each) => each.kind === 'period').length,
     missing: [...missing],
+  }
+}
+
+// ─── Рост обычного месяца ──────────────────────────────────────────────────
+
+/** За сколько месяцев смотрится рост (Р-07). Число видно в основании и в справке. */
+export const GROWTH_MONTHS = 12
+
+/**
+ * Сколько наблюдений нужно, чтобы считать рост, — по два на половину.
+ *
+ * По одному наблюдению с каждой стороны «рост» — это разница двух месяцев,
+ * а не рост: любая крупная трата в одном из них становится трендом.
+ */
+export const GROWTH_MIN = 4
+
+/** Рост обычного месяца — и по чему он посчитан (Р-07, Р-28). */
+export type Growth = {
+  /** Средний месяц ранней половины окна. */
+  early: number
+  /** Средний месяц поздней половины. */
+  late: number
+  /** Насколько поздняя больше ранней. Отрицательное — стало дешевле. */
+  delta: number
+  /** Доля роста: 0,08 — «на 8% больше». Ранняя половина нулевая — null. */
+  share: number | null
+  earlyCount: number
+  lateCount: number
+  /** Чем называть половины: «янв 2026 — июн 2026». */
+  earlyLabel: string
+  lateLabel: string
+  /** Сколько наблюдений выброшено серединой при нечётном числе. */
+  dropped: number
+}
+
+/**
+ * Рост обычного месяца: поздняя половина окна против ранней (Р-28).
+ *
+ * Половины, а не линия тренда: у половин есть основание, которое читается
+ * строкой — «6 наблюдений против 6», — а у наклона прямой основания нет,
+ * и проверить его человеку нечем.
+ *
+ * Наблюдений нечётное число — среднее выбрасывается: иначе оно попало бы
+ * в одну из половин и перекосило бы обе.
+ */
+export function growthOf(list: readonly Observation[], least: number = GROWTH_MIN): Growth | null {
+  if (list.length < least) return null
+
+  const sorted = [...list].sort((a, b) => a.end.localeCompare(b.end))
+  const half = Math.floor(sorted.length / 2)
+  const early = sorted.slice(0, half)
+  const late = sorted.slice(sorted.length - half)
+
+  const mean = (each: readonly Observation[]) =>
+    Math.round(each.reduce((all, one) => all + one.monthly, 0) / each.length)
+
+  const before = mean(early)
+  const after = mean(late)
+
+  return {
+    early: before,
+    late: after,
+    delta: after - before,
+    share: before === 0 ? null : (after - before) / before,
+    earlyCount: early.length,
+    lateCount: late.length,
+    earlyLabel: spanLabel(early),
+    lateLabel: spanLabel(late),
+    dropped: sorted.length - half * 2,
+  }
+}
+
+/** «янв 2026 — июн 2026»: чем называть половину окна. */
+function spanLabel(list: readonly Observation[]): string {
+  const first = list[0]
+  const last = list[list.length - 1]
+  if (!first || !last) return ''
+  const month = (day: string) => formatMonth(day.slice(0, 7))
+  return first === last ? month(first.end) : `${month(first.end)} — ${month(last.end)}`
+}
+
+/** Рост по одной категории: поздняя половина окна против ранней. */
+export type CategoryGrowth = {
+  categoryId: string | null
+  /** Средний месяц ранней половины. */
+  early: number
+  /** Средний месяц поздней половины. */
+  late: number
+  delta: number
+  /** Доля роста. Ранняя половина нулевая — null. */
+  share: number | null
+}
+
+/** Сколько категорий показывать в росте. */
+export const GROWTH_SHOWN = 5
+
+/**
+ * Рост по категориям (Р-07, Р-28).
+ *
+ * Считается только по месяцам с операциями: у итогов прежней таблицы
+ * категорий нет вовсе (Р-12, п. 6), и разложить их не из чего. Поэтому
+ * здесь месяцев может не хватать даже тогда, когда рост в целом уже
+ * посчитан по периодам, — и число месяцев называется.
+ *
+ * Категория, которой нет в одной из половин, в список не идёт: «появилась»
+ * и «подорожала» — разные вещи, и деление на ноль второй из них не заменяет.
+ */
+export function growthByCategory(
+  data: MonthData,
+  month: string,
+  options: { count?: number; least?: number; shown?: number; without?: ReadonlySet<string> } = {},
+): { rows: CategoryGrowth[]; months: number; dropped: number } {
+  const count = options.count ?? GROWTH_MONTHS
+  const least = options.least ?? GROWTH_MIN
+  const shown = options.shown ?? GROWTH_SHOWN
+  const without = options.without ?? new Set<string>()
+
+  const past: string[] = []
+  let cursor = month
+  for (let step = 0; step < count; step++) {
+    cursor = previousMonth(cursor)
+    if (ownsMonth(totalsTouching(data.entries, cursor), cursor)) continue
+    if (operationsOf(data.entries, cursor).some((each) => each.kind === 'expense')) past.push(cursor)
+  }
+
+  if (past.length < least) return { rows: [], months: past.length, dropped: 0 }
+
+  // От старых к новым: `past` собирался назад во времени.
+  const ordered = [...past].reverse()
+  const half = Math.floor(ordered.length / 2)
+  const early = ordered.slice(0, half)
+  const late = ordered.slice(ordered.length - half)
+
+  const meanOf = (months: readonly string[]) => {
+    const sums = new Map<string, number>()
+    for (const each of months) {
+      for (const [categoryId, amount] of byCategory(operationsOf(data.entries, each), data, without)) {
+        sums.set(categoryId, (sums.get(categoryId) ?? 0) + amount)
+      }
+    }
+    for (const [categoryId, amount] of sums) sums.set(categoryId, Math.round(amount / months.length))
+    return sums
+  }
+
+  const before = meanOf(early)
+  const after = meanOf(late)
+
+  const rows: CategoryGrowth[] = []
+  for (const [categoryId, earlyAmount] of before) {
+    const lateAmount = after.get(categoryId)
+    if (lateAmount === undefined || earlyAmount === 0 || lateAmount === 0) continue
+    if (lateAmount === earlyAmount) continue
+    rows.push({
+      categoryId: categoryId === NO_CATEGORY ? null : categoryId,
+      early: earlyAmount,
+      late: lateAmount,
+      delta: lateAmount - earlyAmount,
+      share: (lateAmount - earlyAmount) / earlyAmount,
+    })
+  }
+
+  return {
+    rows: rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, shown),
+    months: past.length,
+    dropped: ordered.length - half * 2,
   }
 }
 
@@ -627,10 +797,15 @@ export function overUsual(
 const NO_CATEGORY = '—'
 
 /** Обычный расход по категориям: особые не в счёт (Р-05). */
-function byCategory(entries: readonly Entry[], data: MonthData): Map<string, number> {
+function byCategory(
+  entries: readonly Entry[],
+  data: MonthData,
+  without: ReadonlySet<string> = new Set(),
+): Map<string, number> {
   const sums = new Map<string, number>()
   for (const entry of entries) {
     if (entry.kind !== 'expense' || entry.special) continue
+    if (entry.recurringId !== undefined && without.has(entry.recurringId)) continue
     const result = toBase(entry, data)
     if ('missing' in result) continue
     const key = entry.categoryId ?? NO_CATEGORY

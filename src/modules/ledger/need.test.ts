@@ -84,8 +84,8 @@ describe('какие шаблоны раскладываются по месяц
 
 describe('необходимый доход (Р-07, Р-27)', () => {
   const usual = usualMonth([
-    { kind: 'month', label: '2026-06', monthly: 3000000 },
-    { kind: 'month', label: '2026-07', monthly: 3000000 },
+    { kind: 'month', label: '2026-06', end: '2026-06-30', monthly: 3000000 },
+    { kind: 'month', label: '2026-07', end: '2026-07-31', monthly: 3000000 },
   ])
 
   it('обычный месяц плюс доля редких', () => {

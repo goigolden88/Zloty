@@ -1,7 +1,14 @@
 import { Link } from 'react-router-dom'
 import { days, plural, timeSpan } from '../shared/core/dates.ts'
 import { QUIET_MS } from '../shared/core/sync.ts'
-import { DAYS_IN_MONTH, OVER_USUAL_MIN, SAVINGS_TIMES_LIMIT, USUAL_MONTHS } from '../modules/ledger/month.ts'
+import {
+  DAYS_IN_MONTH,
+  GROWTH_MIN,
+  GROWTH_MONTHS,
+  OVER_USUAL_MIN,
+  SAVINGS_TIMES_LIMIT,
+  USUAL_MONTHS,
+} from '../modules/ledger/month.ts'
 import { RECURRING_FROM_DAY, REMIND_FROM_DAY } from '../modules/ledger/remind.ts'
 import { MAX_DECIMALS } from '../modules/money/money.ts'
 import { RATE_MAX_AGE_DAYS } from '../modules/money/rates.ts'
@@ -85,6 +92,20 @@ export function Help() {
             <b>Что вычесть нельзя — сказано прямо.</b> У итогов прежней таблицы нет пометок
             регулярных, и сколько редких платежей внутри них, неизвестно. Экран называет число
             таких наблюдений: пока они в расчёте, нужный доход может быть немного завышен.
+          </li>
+          <li>
+            <b>«Рост обычного месяца»</b> — он же личная инфляция, и это честнее звучит так:
+            в нём смешаны и цены, и привычки, а не рост цен сам по себе. Считается просто:
+            наблюдения за последние {GROWTH_MONTHS} {plural(GROWTH_MONTHS, ['месяц', 'месяца', 'месяцев'])}{' '}
+            делятся пополам, и поздняя половина сравнивается с ранней. Нужно хотя бы{' '}
+            {GROWTH_MIN} {plural(GROWTH_MIN, ['наблюдение', 'наблюдения', 'наблюдений'])} — по два
+            на половину; при нечётном числе среднее выбрасывается, чтобы половины были равны.
+          </li>
+          <li>
+            <b>По категориям рост считается только по месяцам с операциями.</b> У итогов прежней
+            таблицы категорий нет, и разложить их не из чего, — поэтому по категориям рост может
+            молчать даже тогда, когда в целом он уже посчитан. Категория, которой нет в одной
+            из половин, в список не идёт: «появилась» и «подорожала» — разные вещи.
           </li>
           <li>
             <b>«Вышло за обычное»</b> — категории, где этот месяц сильнее всего разошёлся с обычным.

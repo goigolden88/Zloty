@@ -14,6 +14,10 @@ import {
   monthlyExpenses,
   monthReport,
   observations,
+  growthByCategory,
+  growthOf,
+  GROWTH_MIN,
+  GROWTH_MONTHS,
   overUsual,
   OVER_USUAL_MIN,
   savingsRate,
@@ -22,7 +26,10 @@ import {
   USUAL_MONTHS,
   type Missing,
   type MonthData,
+  type CategoryGrowth,
+  type Growth,
   type MonthReport,
+  type Observation,
   type OverUsualReport,
   type Running,
   type SavingsRate,
@@ -164,6 +171,10 @@ function Report({
   const seen = observations(data, month, { without: rare })
   const usual = usualMonth(seen.list, seen.missing)
   const need = needed(usual, needData, month, goal, seen.periodsUncleaned)
+  // Рост смотрит дальше обычного месяца: ему нужны обе половины окна (Р-28).
+  const long = observations(data, month, { count: GROWTH_MONTHS, without: rare })
+  const growth = growthOf(long.list)
+  const byCategory = growthByCategory(data, month, { without: rare })
   const over = overUsual(data, month, { today: now, through: recorded?.day ?? null })
   const bars = monthlyExpenses(data, month, BARS)
 
@@ -272,6 +283,8 @@ function Report({
       </div>
 
       <NeedBlock need={need} income={report.income} excluded={seen.excluded} show={show} />
+
+      <GrowthBlock growth={growth} seen={long.list} categories={byCategory} names={names} show={show} />
 
       <OverUsualBlock report={over} names={names} show={show} />
 
@@ -474,23 +487,33 @@ function NeedBlock({
       <h2>Какой доход мне нужен</h2>
       <p className="big">{show(need.amount)}</p>
 
-      <p className="basis">
-        обычный месяц {show(need.usual)} — {usualBasis(need.months, need.periods)}
-        {need.rareCount > 0 && (
-          <>
-            ; плюс {show(need.rare)} в месяц — доля {need.rareCount}{' '}
-            {plural(need.rareCount, [
-              'регулярной, приходящей',
-              'регулярных, приходящих',
-              'регулярных, приходящих',
-            ])}{' '}
-            реже раза в месяц
-          </>
-        )}
-        {need.goal !== null && need.goal > 0 && need.goal < 1 && (
-          <>; и цель откладывать {percent(need.goal)}</>
-        )}
-      </p>
+      {/* Редких регулярных нет и цели нет — нужное равно обычному месяцу,
+          и повторять его основание слово в слово незачем. Сказать надо
+          другое: почему числа совпали и что их разведёт. */}
+      {need.amount === need.usual ? (
+        <p className="basis">
+          это ровно обычный месяц: регулярных, приходящих реже раза в месяц, не заведено
+          {(need.goal === null || need.goal === 0) && ', и цель откладывать долю дохода не задана'}
+        </p>
+      ) : (
+        <p className="basis">
+          обычный месяц {show(need.usual)}
+          {need.rareCount > 0 && (
+            <>
+              ; плюс {show(need.rare)} в месяц — доля {need.rareCount}{' '}
+              {plural(need.rareCount, [
+                'регулярной, приходящей',
+                'регулярных, приходящих',
+                'регулярных, приходящих',
+              ])}{' '}
+              реже раза в месяц
+            </>
+          )}
+          {need.goal !== null && need.goal > 0 && need.goal < 1 && (
+            <>; и цель откладывать {percent(need.goal)}</>
+          )}
+        </p>
+      )}
 
       {excluded > 0 && (
         <p className="basis">
@@ -514,9 +537,101 @@ function NeedBlock({
         <p className="basis">доход за этот месяц не внесён — сравнивать не с чем</p>
       ) : (
         <p className="basis">
-          доход этого месяца — {show(income.amount)}, {basis(income, 'он посчитан')}:{' '}
+          доход этого месяца — {show(income.amount)} по {income.entries}{' '}
+          {plural(income.entries, ['операции', 'операциям', 'операциям'])}:{' '}
           {enough >= 0 ? `хватает с запасом в ${show(enough)}` : `не хватает ${show(-enough)}`}
         </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * «Рост обычного месяца» (Р-07, Р-28) — он же личная инфляция, названная
+ * честно.
+ *
+ * Не рост цен, а рост своих расходов, где смешаны цены и привычки. Оговорка
+ * стоит подзаголовком, а не прячется в справке: число без неё читается как
+ * «инфляция у меня такая», и это неправда.
+ */
+function GrowthBlock({
+  growth,
+  seen,
+  categories,
+  names,
+  show,
+}: {
+  growth: Growth | null
+  seen: readonly Observation[]
+  categories: { rows: CategoryGrowth[]; months: number }
+  names: Map<string, string>
+  show: (amount: number) => string
+}) {
+
+  return (
+    <div className="block">
+      <h2>Рост обычного месяца</h2>
+      <p className="basis">личная инфляция — рост ваших расходов, а не цен: в нём смешаны и цены, и привычки</p>
+
+      {growth === null ? (
+        <p className="muted">
+          Считать не по чему: наблюдений — {seen.length}, а нужно {GROWTH_MIN}, по два на половину.
+          По одному наблюдению с каждой стороны это разница двух месяцев, а не рост.
+        </p>
+      ) : (
+        <>
+          <p className="big">
+            {growth.delta > 0 ? '+' : growth.delta < 0 ? '−' : ''}
+            {show(Math.abs(growth.delta))}
+            {growth.share !== null && ` · ${growth.share > 0 ? '+' : ''}${percent(growth.share)}`}
+          </p>
+          <p className="basis">
+            позже ({growth.lateLabel}) — {show(growth.late)} в месяц; раньше ({growth.earlyLabel}) —{' '}
+            {show(growth.early)}. По {growth.lateCount} и {growth.earlyCount}{' '}
+            {plural(growth.earlyCount, ['наблюдению', 'наблюдениям', 'наблюдениям'])} за последние{' '}
+            {GROWTH_MONTHS} {plural(GROWTH_MONTHS, ['месяц', 'месяца', 'месяцев'])}
+            {growth.dropped > 0 && '; среднее наблюдение выброшено, чтобы половины были равны'}
+          </p>
+          {growth.share === null && (
+            <p className="basis">доли нет: в ранней половине расход нулевой, делить не на что</p>
+          )}
+        </>
+      )}
+
+      {/* По категориям рост стоит только на месяцах: у итогов прежней
+          таблицы категорий нет вовсе (Р-12, п. 6). Поэтому месяцев может
+          не хватать даже там, где рост в целом уже посчитан. */}
+      <h3>По категориям</h3>
+      {categories.rows.length === 0 ? (
+        <p className="muted">
+          Считать не по чему: месяцев с операциями — {categories.months}, а нужно {GROWTH_MIN}.
+          Итоги прежней таблицы сюда не идут: по категориям они не разложены.
+        </p>
+      ) : (
+        <>
+          <ul className="plain">
+            {categories.rows.map((row) => (
+              <li key={row.categoryId ?? 'нет'} className="line">
+                <div className="line__main">
+                  {row.categoryId === null ? 'Без категории' : (names.get(row.categoryId) ?? 'категория удалена')}
+                  <div className="basis">
+                    было {show(row.early)} в месяц, стало {show(row.late)}
+                  </div>
+                </div>
+                <div className={row.delta > 0 ? 'error' : 'muted'}>
+                  {row.delta > 0 ? '+' : '−'}
+                  {show(Math.abs(row.delta))}
+                  {row.share !== null && ` · ${row.share > 0 ? '+' : ''}${percent(row.share)}`}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p className="basis">
+            по {categories.months} {plural(categories.months, ['месяцу', 'месяцам', 'месяцам'])}{' '}
+            с операциями; категория, которой нет в одной из половин, сюда не идёт — «появилась»
+            и «подорожала» — разные вещи
+          </p>
+        </>
       )}
     </div>
   )
