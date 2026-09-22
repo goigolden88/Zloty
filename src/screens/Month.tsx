@@ -197,7 +197,7 @@ function Report({
                 отложенное посчитано: причина его отсутствия разобрана выше. */}
             <p className="big">{show(report.saved ?? 0)}</p>
             <p className="basis">
-              {rateWords(savingsRate(report), show)} — {basis(report.income, 'доход')},{' '}
+              {rateWords(savingsRate(report))} — {basis(report.income, 'доход')},{' '}
               {basis(report.expense, 'расход')}
             </p>
             {goal !== null && report.savingsRate !== null && savingsRate(report).kind === 'share' && (
@@ -308,10 +308,12 @@ function Report({
  * Доля от неполного дохода уходит в сотни процентов и говорит о данных,
  * а не о месяце. Деньги читаются всегда.
  */
-function rateWords(rate: SavingsRate, show: (amount: number) => string): string {
+function rateWords(rate: SavingsRate): string {
   if (rate.kind === 'none') return 'доход нулевой, доля не считается'
   if (rate.kind === 'share') return `${percent(rate.share)} дохода`
-  return `расход больше дохода в ${Math.round(rate.times)} ${plural(Math.round(rate.times), ['раз', 'раза', 'раз'])}, на ${show(rate.short)}`
+  // Сумму нехватки не повторяем: она и есть «отложено» строкой выше.
+  const times = Math.round(rate.times)
+  return `расход больше дохода в ${times} ${plural(times, ['раз', 'раза', 'раз'])}`
 }
 
 /**
@@ -412,17 +414,18 @@ function OverUsualBlock({
   const nameOf = (id: string | null) =>
     id === null ? 'Без категории' : (names.get(id) ?? 'категория удалена')
 
-  // Прошлых месяцев нет вовсе — об этом уже сказал блок «Обычный месяц».
-  if (report.months === 0) return null
-
   if (report.months < OVER_USUAL_MIN) {
     return (
       <div className="block">
         <h2>Вышло за обычное</h2>
         <p className="muted">
-          Считать не по чему: прошлых {plural(report.months, ['месяца', 'месяцев', 'месяцев'])} с операциями —{' '}
-          {report.months}, а нужно {OVER_USUAL_MIN}. По одному месяцу «обычное» — это тот самый месяц,
-          и отклонение от него всегда нулевое.
+          {report.months === 0
+            ? 'Считать не по чему: прошлых месяцев с операциями нет. Месяц, расход которого записан итогом ' +
+              'за период, сюда не идёт — у периода нет категорий, и разложить его не из чего.'
+            : `Считать не по чему: прошлых месяцев с операциями — ${report.months}, а нужно ${OVER_USUAL_MIN}. ` +
+              'По одному месяцу «обычное» — это тот самый месяц, и отклонение от него всегда нулевое.'}{' '}
+          Отклонения появятся, когда наберётся {OVER_USUAL_MIN}{' '}
+          {plural(OVER_USUAL_MIN, ['месяц', 'месяца', 'месяцев'])} с операциями.
         </p>
       </div>
     )
@@ -477,8 +480,10 @@ function OverUsualBlock({
 
       {report.rare > 0 && (
         <p className="basis">
-          ещё {report.rare} {plural(report.rare, ['категория встречалась', 'категории встречались', 'категорий встречались'])}{' '}
-          реже чем в половине прошлых {plural(report.months, ['месяца', 'месяцев', 'месяцев'])} — обычного у них нет
+          ещё {report.rare}{' '}
+          {plural(report.rare, ['категория встречалась', 'категории встречались', 'категорий встречались'])} реже
+          чем в половине прошлых {plural(report.months, ['месяца', 'месяцев', 'месяцев'])} — обычного{' '}
+          {plural(report.rare, ['у неё', 'у них', 'у них'])} нет
         </p>
       )}
     </div>
@@ -533,8 +538,9 @@ function PeriodsNote({ report, show }: { report: ReturnType<typeof monthReport>;
   const head =
     days === 0
       ? 'Итоги за период задевают этот месяц, но не его дни — их числа в месяц не входят:'
-      : `${days} ${plural(days, ['день', 'дня', 'дней'])} этого месяца из ${report.monthDays} записаны ` +
-        'итогами за период — их числа в месяц не входят, и за эти дни расход здесь не учтён:'
+      : `${days} ${plural(days, ['день', 'дня', 'дней'])} этого месяца из ${report.monthDays} ` +
+        `${plural(days, ['записан', 'записаны', 'записаны'])} итогами за период — их числа в месяц ` +
+        'не входят, и за эти дни расход здесь не учтён:'
 
   return (
     <div className="panel">
