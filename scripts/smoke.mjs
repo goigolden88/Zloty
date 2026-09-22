@@ -1234,6 +1234,161 @@ async function scenario(profile) {
   await act(`byText('button', 'Сбросить').click();`)
   await sleep(500)
 
+  // ── Долги: люди, разовый долг с возвратом, комната с событием и тратой.
+  // Экранов долгов тестами не покрыть — их проверяет только этот прогон.
+  await go('/debts')
+  const debts0 = await screen()
+  check('вкладка «Долги» открылась', has(debts0, 'Долги'), line(debts0, 'Долги'))
+  check(
+    'без пометки «это я» приложение говорит прямо, чего ему не хватает',
+    has(debts0, 'Отметьте себя'),
+    line(debts0, 'Отметьте себя'),
+  )
+
+  // Фолд может быть уже открыт: раскрываем только если кнопки не видно.
+  await act(`if (!byText('button', 'Завести человека')) startsWith('.fold__btn', 'Люди').click();`)
+  await sleep(400)
+  await act(`byText('button', 'Завести человека').click();`)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('.form input'), 'Аня');
+    document.querySelector('.form input[type="checkbox"]').click();
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(700)
+
+  await act(`byText('button', 'Завести человека').click();`)
+  await sleep(400)
+  await act(`set(document.querySelector('.form input'), 'Боря');`)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(700)
+
+  const people = await screen()
+  check('люди завелись, и «я» помечен', has(people, 'это вы'), line(people, 'это вы'))
+
+  // Вторая пометка «я» не ставится: по ней идут все выборки «мои долги».
+  await act(`byText('button', 'Завести человека').click();`)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('.form input'), 'Вера');
+    document.querySelector('.form input[type="checkbox"]').click();
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(500)
+  const second = await screen()
+  check(
+    'вторая пометка «это я» не ставится, и сказано, на ком стоит первая',
+    has(second, 'уже стоит на'),
+    line(second, 'уже стоит на'),
+  )
+  await act(`byText('button', 'Отмена').click();`)
+  await sleep(400)
+
+  // Разовый долг: три поля и дата сегодняшним числом.
+  await act(`if (!byText('button', 'Записать долг')) startsWith('.fold__btn', 'Разовые долги').click();`)
+  await sleep(400)
+  await act(`byText('button', 'Записать долг').click();`)
+  await sleep(400)
+  await act(`
+    const amount = [...document.querySelectorAll('.form input')].find((el) => el.inputMode === 'decimal');
+    set(amount, '5000');
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать').click();`)
+  await sleep(800)
+
+  const lent = await screen()
+  check('разовый долг записан и назван суммой', has(lent, '5 000'), line(lent, '5 000'))
+  check('и попал в итог «кто кому должен»', has(lent, 'должен вам'), line(lent, 'должен вам'))
+
+  // Возврат частями: остаток считается по возвратам, а не хранится.
+  await act(`byText('button', 'Вернули').click();`)
+  await sleep(400)
+  await act(`
+    const box = [...document.querySelectorAll('input')].find((el) => el.placeholder === 'сколько вернули');
+    set(box, '2000');
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать возврат').click();`)
+  await sleep(800)
+  const repaid = await screen()
+  check('после возврата остаётся 3 000, и видно, сколько вернули', has(repaid, '3 000'), line(repaid, '3 000'))
+  check('возврат назван вместе с основанием', has(repaid, 'вернули'), line(repaid, 'вернули'))
+
+  // Комната: заводим на двоих, идём внутрь.
+  await act(`if (!byText('button', 'Завести комнату')) startsWith('.fold__btn', 'Комнаты').click();`)
+  await sleep(400)
+  await act(`byText('button', 'Завести комнату').click();`)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('.form input'), 'Лето');
+    [...document.querySelectorAll('.form input[type="checkbox"]')].forEach((box) => {
+      if (!box.checked) box.click();
+    });
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(800)
+  const rooms = await screen()
+  check('комната завелась', has(rooms, 'Лето'), line(rooms, 'Лето'))
+
+  await act(`byText('a', 'Лето').click();`)
+  await sleep(800)
+  const room0 = await screen()
+  check('комната открылась своим адресом', has(room0, 'События и траты'), line(room0, 'участника'))
+  // Число рядом со склонением: `plural` ядра отдаёт форму слова, а не число
+  // вместе с ней, и потерянное число не ловит ни сторож цифр, ни проверка
+  // на слова. Здесь оно проверяется прямо.
+  check(
+    'в шапке комнаты число стоит рядом со склонением, а не потерялось',
+    /2 участника/.test(room0.replace(/ /g, ' ')),
+    line(room0, 'участника'),
+  )
+
+  await act(`byText('button', 'Новое событие').click();`)
+  await sleep(400)
+  await act(`set(document.querySelector('.form input'), 'Корт');`)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(800)
+  const withEvent = await screen()
+  check('событие завелось со своей датой и составом', has(withEvent, 'Корт'), line(withEvent, 'Корт'))
+
+  await act(`byText('button', 'Добавить трату').click();`)
+  await sleep(400)
+  await act(`
+    const fields = [...document.querySelectorAll('.form input')];
+    set(fields[0], 'Мячи');
+    const amount = fields.find((el) => el.inputMode === 'decimal');
+    set(amount, '1000');
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Добавить').click();`)
+  await sleep(900)
+
+  const spent = await screen()
+  check('трата записана', has(spent, 'Мячи'), line(spent, 'Мячи'))
+  check('доли поделены поровну и названы поимённо', has(spent, '500,00'), line(spent, '500,00'))
+  check('итог события называет личные расходы и оплаченное', has(spent, 'личные расходы'), line(spent, 'личные расходы'))
+  check('и «кто кому должен» посчитан', has(spent, 'Боря → Аня'), line(spent, 'Боря → Аня'))
+
+  // Галочка «перевели» — единственное, что становится записью.
+  await act(`byText('button', 'Перевели').click();`)
+  await sleep(900)
+  const settled = await screen()
+  check('после отметки о переводе все в расчёте', has(settled, 'в расчёте'), line(settled, 'в расчёте'))
+  await act(`if (!byText('button', 'Записать перевод')) startsWith('.fold__btn', 'Переводы').click();`)
+  await sleep(500)
+  const transfers = await screen()
+  check(
+    'а сам перевод стал записью в комнате',
+    has(transfers, 'Боря → Аня'),
+    line(transfers, 'Боря → Аня'),
+  )
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()
@@ -1301,13 +1456,14 @@ async function scenario(profile) {
     /Операции и итоги:\s*\d+/.test(about.replace(/ /g, ' ')),
     line(about, 'Операции и итоги'),
   )
-  // Миграция на версию 2 (Р-30): хранилища долгов завелись и видны пустыми.
-  // Не завелись бы — строки не было бы вовсе, и молча пропало бы то, ради
-  // чего схема поднималась.
+  // Миграция на версию 2 (Р-30): хранилища долгов завелись, и сценарий
+  // выше в них написал. Считаются именно записи — так проверка ловит и то,
+  // что хранилище есть, и то, что запись до него дошла.
+  const flat = about.replace(/ /g, ' ')
   check(
-    'хранилища долгов завелись и пусты',
-    /Разовые долги:\s*0/.test(about.replace(/ /g, ' ')) && /Комнаты:\s*0/.test(about.replace(/ /g, ' ')),
-    line(about, 'Разовые долги'),
+    'записи долгов легли в свои хранилища',
+    /Люди:\s*2/.test(flat) && /Комнаты:\s*1/.test(flat) && /Переводы в комнатах:\s*1/.test(flat),
+    [line(about, 'Люди:'), line(about, 'Комнаты:'), line(about, 'Переводы в комнатах')].join(' · '),
   )
   check('видна версия схемы', has(about, 'Версия схемы данных'), line(about, 'Версия схемы данных'))
 

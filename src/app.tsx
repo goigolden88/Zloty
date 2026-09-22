@@ -5,10 +5,12 @@ import { db, sync } from './app/core.ts'
 import { CoreProvider } from './shared/ui/core.tsx'
 import { Layout, type Tab } from './shared/ui/Layout.tsx'
 import { Books } from './screens/Books.tsx'
+import { Debts } from './screens/Debts.tsx'
 import { Entries } from './screens/Entries.tsx'
 import { Help } from './screens/Help.tsx'
 import { Import } from './screens/Import.tsx'
 import { Month } from './screens/Month.tsx'
+import { Room } from './screens/Room.tsx'
 import { Settings } from './screens/Settings.tsx'
 
 /**
@@ -28,6 +30,7 @@ const TABS: readonly Tab[] = [
   // их заводят один раз, и они живут ссылкой из шапки.
   { to: '/', name: 'Месяц', end: true },
   { to: '/entries', name: 'Операции', end: false },
+  { to: '/debts', name: 'Долги', end: false },
 ]
 
 export function App() {
@@ -42,6 +45,10 @@ export function App() {
             {/* Справочники учёта: заводят один раз, правят редко — потому
                 ссылкой из шапки «Месяца», а не вкладкой. */}
             <Route path="entries" element={<Entries />} />
+            {/* Долги: люди с итогом снаружи, комната — своим адресом,
+                чтобы на неё можно было вернуться ссылкой (Р-30). */}
+            <Route path="debts" element={<Debts />} />
+            <Route path="debts/:roomId" element={<Room />} />
             <Route path="import" element={<Import />} />
             <Route path="books" element={<Books />} />
             <Route path="settings" element={<Settings />} />
