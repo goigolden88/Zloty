@@ -157,7 +157,7 @@ export type Entry = Base & {
   ext?: string
   /** Комментарии таблицы — сюда. */
   note?: string
-  /** Связь с долгом или тратой комнаты — Этап 3 (Р-05). */
+  /** Связь с тратой комнаты, долгом или возвратом: в поток идёт доля (Р-31). */
   refs?: string[]
 }
 
@@ -179,6 +179,107 @@ export type Balance = Base & {
   note?: string
 }
 
+// ─── Долги (Р-01, Р-05, Р-30, Р-31) ────────────────────────────────────────
+
+/**
+ * Человек — один справочник на комнаты и разовые долги (Р-01).
+ *
+ * «Я» — обычный человек с пометкой `self`, а не подразумеваемый владелец:
+ * у каждой траты плательщик и доли — люди по `id`, и «мои долги» идут через
+ * пометку. Запись с `self` одна; единственность держат код и тест.
+ */
+export type Person = Base & {
+  name: string
+  self?: true
+  archived?: boolean
+}
+
+/**
+ * Комната — компания, на которую ведётся общий счёт: «FFG26».
+ *
+ * Долгоживущая: поводов в ней много, и каждый — своё событие (Р-30).
+ * Самостоятельна (условие 1 Р-01): всё её — события, траты, переводы —
+ * ссылается на её `id` и вынимается без записей учёта.
+ */
+export type Room = Base & {
+  name: string
+  /** Одна на комнату: суммы внутри — целые в ней (условие 6 Р-01). */
+  currency: CurrencyCode
+  personIds: string[]
+  closed?: boolean
+}
+
+/**
+ * Повод, на который скидывались: «Падел, 21 августа» (Р-30).
+ *
+ * Состав хранится, а не выводится из трат: «поровну» должно знать, на кого
+ * делить — на всю комнату или на троих, кто пошёл. Для новой траты это
+ * подсказка, чем заполнить доли, а не правило, по которому пересчитываются
+ * старые: доли уже записаны в самой трате.
+ */
+export type RoomEvent = Base & {
+  roomId: string
+  name: string
+  /** ГГГГ-ММ-ДД */
+  date: string
+  personIds: string[]
+  closed?: boolean
+}
+
+/**
+ * Трата события: кто заплатил, сколько, на кого делится (Р-30).
+ *
+ * Доли записаны поимённо в момент заведения — запись знает, что случилось,
+ * а не что сейчас настроено (тот же урок, что и Р-26). Трат вне событий нет.
+ */
+export type RoomSpend = Base & {
+  eventId: string
+  /** ГГГГ-ММ-ДД. Своя: подставляется из события и дальше живёт сама. */
+  date: string
+  title: string
+  payerId: string
+  /** Целое в валюте комнаты. */
+  amount: number
+  /** Нет `share` — поровну между перечисленными; остаток от деления — плательщику. */
+  split: { personId: string; share?: number }[]
+}
+
+/**
+ * Кто кому вернул — это и есть «вернул» (Р-01, Р-30).
+ *
+ * Принадлежит комнате, а не событию: рассчитываются разом за несколько
+ * поводов. Заводится кнопкой в списке «кто кому должен».
+ */
+export type RoomTransfer = Base & {
+  roomId: string
+  /** ГГГГ-ММ-ДД */
+  date: string
+  fromId: string
+  toId: string
+  /** Целое в валюте комнаты. */
+  amount: number
+  /** «на Сбер» — банк перевода, если назван. Справочника банков нет: банки чужие. */
+  note?: string
+}
+
+/** Разовый долг: «дал Пете», «взял у Маши». Без комнаты, события и компании (Р-01). */
+export type Loan = Base & {
+  personId: string
+  direction: 'lent' | 'borrowed'
+  money: Money
+  /** ГГГГ-ММ-ДД */
+  date: string
+  note?: string
+}
+
+/** Возврат разового долга. Частями — законно (Р-01). */
+export type Repayment = Base & {
+  loanId: string
+  money: Money
+  /** ГГГГ-ММ-ДД */
+  date: string
+}
+
 // ─── Хранилища ─────────────────────────────────────────────────────────────
 
 /**
@@ -194,10 +295,21 @@ export type StoreRecord = {
   rates: Rate
   entries: Entry
   balances: Balance
+  people: Person
+  rooms: Room
+  roomEvents: RoomEvent
+  roomSpends: RoomSpend
+  roomTransfers: RoomTransfer
+  loans: Loan
+  repayments: Repayment
 }
 
-/** Порядок, в котором хранилища пишут импорт и слепок. */
-export const SYNCED_STORES = [
+/**
+ * Раскладка версии 1 — заморожена после первого релиза (Р-11, Р-12).
+ * Восемь хранилищ учёта и снимков; долги пришли миграцией на версию 2
+ * и сюда не дописываются никогда.
+ */
+export const V1_STORES = [
   'profile',
   'currencies',
   'accounts',
@@ -208,19 +320,45 @@ export const SYNCED_STORES = [
   'balances',
 ] as const satisfies readonly (keyof StoreRecord)[]
 
-/**
- * Раскладка версии 1 — заморожена после первого релиза (Р-11, Р-12).
- * Хранилища долгов придут миграцией Этапа 3.
- */
-export const V1_STORES = SYNCED_STORES
+/** Хранилища долгов — версия 2 (Р-30). Их заводит миграция, и только она. */
+export const DEBT_STORES = [
+  'people',
+  'rooms',
+  'roomEvents',
+  'roomSpends',
+  'roomTransfers',
+  'loans',
+  'repayments',
+] as const satisfies readonly (keyof StoreRecord)[]
 
-export const SCHEMA_VERSION = 1
+/** Порядок, в котором хранилища пишут импорт и слепок: справочники раньше записей. */
+export const SYNCED_STORES = [...V1_STORES, ...DEBT_STORES] as const satisfies readonly (keyof StoreRecord)[]
+
+export const SCHEMA_VERSION = 2
 
 /**
- * Реестр миграций заводится пустым с первого дня: на версии 1 мигрировать
- * нечего, но место для механики нужно сейчас (договор семьи).
+ * Первая миграция схемы (Р-30).
+ *
+ * Только добавляет: семь хранилищ долгов. Записи учёта не трогает — значит
+ * `additive: true`, и слепок, выгруженный на версии 1, приложение примет.
+ *
+ * Индексов, кроме `updatedAt`, новые хранилища не получают: он нужен слиянию,
+ * а читать по своим ядро всё равно не умеет (отложенная правка ядра).
+ * Заводить их впрок второй раз незачем — за год долгов записей сотни.
  */
-export const MIGRATIONS: readonly Migration[] = []
+const DEBTS: Migration = {
+  to: 2,
+  note: 'Долги Этапа 3: люди, комнаты, события, траты, переводы, разовые долги и возвраты',
+  additive: true,
+  run: (database) => {
+    for (const store of DEBT_STORES) {
+      const created = database.createObjectStore(store, { keyPath: 'id' })
+      created.createIndex('updatedAt', 'updatedAt') // нужен слиянию
+    }
+  },
+}
+
+export const MIGRATIONS: readonly Migration[] = [DEBTS]
 
 // ─── Даты записей ──────────────────────────────────────────────────────────
 

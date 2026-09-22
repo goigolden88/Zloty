@@ -22,13 +22,15 @@ export const config: AppConfig<StoreRecord> = {
   migrations: MIGRATIONS,
   stores: SYNCED_STORES,
 
-  // Восемь хранилищ учёта и снимков (Р-11, Р-12). Хранилища долгов — первой
-  // миграцией в Этапе 3: модель комнаты ждёт разбора, а гадать нельзя —
-  // список заморожен с первым релизом.
+  // Восемь хранилищ учёта и снимков (Р-11, Р-12) — раскладка версии 1,
+  // замороженная с первым релизом. Семь хранилищ долгов завела миграция
+  // на версию 2 (Р-30); сюда они не дописываются никогда.
   v1Stores: V1_STORES,
 
   // Сверх `updatedAt`. Месяц читается по дате, повтор импорта ловится по
   // `ext`, история счёта — по `accountId` (02-Архитектура, «Хранение»).
+  // Хранилищам долгов своих индексов не заводим: читать по ним ядро всё равно
+  // не умеет, а записей там сотни за год.
   indexes: {
     profile: [],
     currencies: [],
@@ -38,9 +40,17 @@ export const config: AppConfig<StoreRecord> = {
     rates: ['date'],
     entries: ['date', 'ext', 'accountId'],
     balances: ['date', 'accountId'],
+    people: [],
+    rooms: [],
+    roomEvents: [],
+    roomSpends: [],
+    roomTransfers: [],
+    loans: [],
+    repayments: [],
   },
 
-  // 02-Архитектура, «Раскладка данных в репозитории».
+  // 02-Архитектура, «Раскладка данных в репозитории». Правило одно на всё:
+  // справочники — одним файлом, датированное — по месяцам.
   places: {
     profile: { split: 'none', path: 'profile.json' },
     currencies: { split: 'none', path: 'currencies.json' },
@@ -53,6 +63,15 @@ export const config: AppConfig<StoreRecord> = {
     // а не теряется.
     entries: { split: 'month', dir: 'entries', dateOf: entryDate },
     balances: { split: 'month', dir: 'balances', dateOf: (balance) => balance.date },
+    // Долги (Р-30). Люди и комнаты — справочники; событие, трата, перевод,
+    // долг и возврат несут свою дату и ложатся по ней.
+    people: { split: 'none', path: 'people.json' },
+    rooms: { split: 'none', path: 'rooms.json' },
+    roomEvents: { split: 'month', dir: 'events', dateOf: (event) => event.date },
+    roomSpends: { split: 'month', dir: 'spends', dateOf: (spend) => spend.date },
+    roomTransfers: { split: 'month', dir: 'transfers', dateOf: (transfer) => transfer.date },
+    loans: { split: 'month', dir: 'loans', dateOf: (loan) => loan.date },
+    repayments: { split: 'month', dir: 'repayments', dateOf: (repayment) => repayment.date },
   },
 
   storeNotes: {
@@ -64,6 +83,13 @@ export const config: AppConfig<StoreRecord> = {
     rates: 'курсы валют — по дате курса',
     entries: 'операции и итоги периодов — по месяцу, к которому относятся',
     balances: 'снимки остатков — по дате снимка',
+    people: 'люди: на комнаты и разовые долги; «я» — с пометкой',
+    rooms: 'комнаты — компании, на которые ведётся общий счёт',
+    roomEvents: 'события комнат — поводы, на которые скидывались',
+    roomSpends: 'траты событий: кто заплатил и на кого делится',
+    roomTransfers: 'переводы внутри комнаты — кто кому вернул',
+    loans: 'разовые долги: дал или взял',
+    repayments: 'возвраты разовых долгов, в том числе частями',
   },
 
   importFormat: 'zloty-import',

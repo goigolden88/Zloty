@@ -28,6 +28,13 @@ const LABELS: Record<(typeof SYNCED_STORES)[number], string> = {
   rates: 'Курсы',
   entries: 'Операции и итоги',
   balances: 'Снимки остатков',
+  people: 'Люди',
+  rooms: 'Комнаты',
+  roomEvents: 'События комнат',
+  roomSpends: 'Траты событий',
+  roomTransfers: 'Переводы в комнатах',
+  loans: 'Разовые долги',
+  repayments: 'Возвраты долгов',
 }
 
 type Row = { store: (typeof SYNCED_STORES)[number]; live: number; total: number }
