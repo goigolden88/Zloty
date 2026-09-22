@@ -95,18 +95,24 @@ function completeness(input: ReportInput, _show: Show): string[] {
 
   const out: string[] = []
   if (running.elapsed < running.total) {
-    out.push(`Месяц ещё идёт: прошло ${running.elapsed} из ${running.total} ${days(running.total)}.`)
+    out.push(`Месяц ещё идёт: прошло ${running.elapsed} из ${running.total} ${daysOf(running.total)}.`)
   }
   if (running.passed < running.elapsed && input.recorded) {
     out.push(
       `Выписки доведены по ${formatDate(input.recorded.day)} — по счёту «${input.recorded.account.name}». ` +
-        `Расход посчитан по ${running.passed} ${days(running.passed)} месяца, а не по всем прошедшим.`,
+        `Расход посчитан по ${running.passed} ${daysTo(running.passed)} месяца, а не по всем прошедшим.`,
     )
   }
   return out.length > 0 ? [...out, ''] : []
 }
 
-function days(n: number): string {
+/** «30 дней» — родительный: он идёт после числительного. */
+function daysOf(n: number): string {
+  return plural(n, ['день', 'дня', 'дней'])
+}
+
+/** «по 18 дням» — дательный. */
+function daysTo(n: number): string {
   return plural(n, ['дню', 'дням', 'дням'])
 }
 
@@ -134,7 +140,7 @@ function totals(input: ReportInput, show: Show): string[] {
       report.savingsRate === null
         ? ''
         : report.income.amount > 0 && report.expense.amount > report.income.amount * 2
-          ? ` — расход больше дохода в ${Math.round(report.expense.amount / report.income.amount)} раз`
+          ? ` — расход больше дохода в ${times(report)} ${plural(times(report), ['раз', 'раза', 'раз'])}`
           : ` — ${percent(report.savingsRate)} дохода`
     out.push(`- Отложено: ${show(saved)}${rate}`)
   }
@@ -144,6 +150,11 @@ function totals(input: ReportInput, show: Show): string[] {
   }
 
   return [...out, '']
+}
+
+/** Во сколько раз расход больше дохода. Целое: «в 10,8 раза» не читается. */
+function times(report: MonthReport): number {
+  return Math.round(report.expense.amount / report.income.amount)
 }
 
 function ops(n: number): string {
@@ -165,6 +176,28 @@ function usualPart(input: ReportInput, show: Show): string[] {
   }
 
   const out = ['## Обычный месяц', '', `${show(usual.monthly)} — по ${basis.join(' и ')}, без особых трат`]
+
+  // Главное сравнение месяца: иду ли я быстрее обычного. На экране оно
+  // стоит рядом с числом, и в отчёте без него беседе нечего сопоставить.
+  const running = input.report.running
+  const span = input.report.spanExpense
+  if (span.entries > 0) {
+    if (running === null) {
+      const against = usual.monthly
+      out.push(
+        `В этом месяце — ${show(span.amount)}, то есть ` +
+          `${span.amount > against ? 'больше' : 'меньше'} обычного на ${show(Math.abs(span.amount - against))}.`,
+      )
+    } else if (running.passed > 0) {
+      const against = Math.round((usual.monthly * running.passed) / running.total)
+      out.push(
+        `За ${running.passed} ${daysOf(running.passed)} месяца — ${show(span.amount)}, ` +
+          `а обычно за такой же срок — ${show(against)}: ` +
+          `${span.amount > against ? 'больше' : 'меньше'} на ${show(Math.abs(span.amount - against))}.`,
+      )
+    }
+  }
+
   if (input.excluded > 0) {
     out.push(
       `Из него вынесено ${input.excluded} ${plural(input.excluded, ['платёж', 'платежа', 'платежей'])}` +
@@ -279,12 +312,21 @@ function unknownPart(input: ReportInput, show: Show): string[] {
   const out: string[] = []
   const { report } = input
 
-  for (const total of report.periodTotals) {
+  if (report.periodTotals.length > 0) {
+    // Итогов может быть несколько на один и тот же промежуток — обычный
+    // и особый (Р-14). Дни у них одни, и называть их по разу на итог значило
+    // бы сказать беседе, что покрытых дней вдвое больше.
     out.push(
-      `- ${report.coveredDays} ${plural(report.coveredDays, ['день', 'дня', 'дней'])} месяца из ${report.monthDays}` +
-        ` записаны итогом за период: ${show(total.money.amount)} за` +
-        ` ${formatDate(total.period?.from ?? '')} — ${formatDate(total.period?.to ?? '')}, по категориям не разложено`,
+      `- ${report.coveredDays} ${daysOf(report.coveredDays)} месяца из ${report.monthDays}` +
+        ` ${plural(report.coveredDays, ['записан', 'записаны', 'записаны'])} итогами за период,` +
+        ' по категориям они не разложены:',
     )
+    for (const total of report.periodTotals) {
+      out.push(
+        `  - ${show(total.money.amount)} за ${formatDate(total.period?.from ?? '')} —` +
+          ` ${formatDate(total.period?.to ?? '')}`,
+      )
+    }
   }
 
   const running = report.running

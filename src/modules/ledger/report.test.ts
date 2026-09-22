@@ -70,10 +70,65 @@ describe('отчёт месяца (Р-29)', () => {
   // привычками человека — уверенно и неверно.
   it('расход, записанный итогом за период, назван в «чего приложение не знает»', () => {
     const covered = [entry({ kind: 'expense', amount: 4000000, period: { from: '2026-09-01', to: '2026-09-30' } })]
-    const text = monthReportText(input(covered))
+    const text = flat(monthReportText(input(covered)))
     expect(text).toContain('## Чего приложение не знает')
-    expect(text).toContain('записаны итогом за период')
-    expect(text).toContain('по категориям не разложено')
+    expect(text).toContain('30 дней месяца из 30 записаны итогами за период')
+    expect(text).toContain('по категориям они не разложены')
+    expect(text).toContain('- 40 000,00 ₽ за 01.09.2026 — 30.09.2026')
+  })
+
+  // Итогов бывает два на один промежуток — обычный и особый (Р-14).
+  // Дни у них одни, и назвать их дважды значило бы сказать беседе,
+  // что покрытых дней вдвое больше.
+  it('два итога за один промежуток дни месяца не удваивают', () => {
+    const both = [
+      entry({ kind: 'expense', amount: 4000000, period: { from: '2026-09-01', to: '2026-09-30' } }),
+      entry({ kind: 'expense', amount: 500000, period: { from: '2026-09-01', to: '2026-09-30' }, special: true }),
+    ]
+    const text = flat(monthReportText(input(both)))
+    const days = text.split('\n').filter((line) => line.includes('месяца из 30'))
+    expect(days).toHaveLength(1)
+    expect(text).toContain('- 40 000,00 ₽ за')
+    expect(text).toContain('- 5 000,00 ₽ за')
+  })
+
+  it('сравнение с обычным месяцем стоит в отчёте, а не только на экране', () => {
+    const past = [
+      entry({ kind: 'expense', amount: 3000000, date: '2026-07-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 3000000, date: '2026-08-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 1000000, date: '2026-09-10', categoryId: 'food' }),
+    ]
+    const text = flat(monthReportText(input(past)))
+    expect(text).toContain('В этом месяце — 10 000,00 ₽, то есть меньше обычного на 20 000,00 ₽.')
+  })
+
+  it('у месяца, который ещё идёт, сравнение урезано до записанного срока', () => {
+    const past = [
+      entry({ kind: 'expense', amount: 3000000, date: '2026-07-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 3000000, date: '2026-08-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 1000000, date: '2026-09-10', categoryId: 'food' }),
+    ]
+    const data: MonthData = { entries: past, currencies: [RUB], rates: [], base: 'RUB' }
+    const text = flat(
+      monthReportText(input(past, { report: monthReport(data, '2026-09', '2026-09-15', '2026-09-15') })),
+    )
+    expect(text).toContain('За 15 дней месяца')
+    expect(text).toContain('а обычно за такой же срок — 15 000,00 ₽')
+  })
+
+  it('кратность склоняется вместе с числом', () => {
+    const thin = [
+      entry({ kind: 'income', amount: 100000, date: '2026-09-05', categoryId: 'pay' }),
+      entry({ kind: 'expense', amount: 5200000, date: '2026-09-10', categoryId: 'food' }),
+    ]
+    expect(flat(monthReportText(input(thin)))).toContain('больше дохода в 52 раза')
+  })
+
+  it('дни месяца называются в родительном, а не в дательном', () => {
+    const data: MonthData = { entries: list, currencies: [RUB], rates: [], base: 'RUB' }
+    const text = monthReportText(input(list, { report: monthReport(data, '2026-09', '2026-09-22') }))
+    expect(text).toContain('прошло 22 из 30 дней')
+    expect(text).not.toContain('из 30 дням')
   })
 
   it('незагруженные дни названы отдельно от прожитых', () => {
