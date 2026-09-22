@@ -266,6 +266,12 @@ export type MonthReport = {
   monthDays: number
   /** Месяц ещё идёт — сколько его дней прошло (Р-22). Null — месяц кончился. */
   running: Running | null
+  /**
+   * Расход без особых за записанный срок (Р-24) — то единственное, что можно
+   * сравнивать с урезанным обычным месяцем. Месяц записан целиком — совпадает
+   * с `usualExpense`.
+   */
+  spanExpense: Sum
 }
 
 /**
@@ -299,6 +305,7 @@ export function monthReport(
   // его из дохода нельзя. Иначе отложенным окажется весь доход.
   // Доход не внесён — отложенного тоже не существует: ноль здесь означал бы
   // «ничего не отложено», а правда в том, что считать не из чего (Р-07).
+  const running = today === undefined ? null : monthShare(month, today, through)
   const monthDays = daysInMonth(month)
   const coveredDays = daysCoveredBy(periodTotals, month)
   // Период «владеет» месяцем по большинству дней (Р-20). Край периода,
@@ -324,7 +331,8 @@ export function monthReport(
     periodTotals,
     coveredDays,
     monthDays,
-    running: today === undefined ? null : monthShare(month, today, through),
+    running,
+    spanExpense: sumOf(within(expenses.filter((each) => !each.special), spanEnd(month, running)), data),
   }
 }
 
@@ -542,7 +550,9 @@ export function overUsual(
   // а экран говорит, чего ждёт (Р-21, п. 4).
   if (past.length < least) return empty
 
-  const now = byCategory(operationsOf(data.entries, month), data)
+  // Этот месяц берётся за тот же срок, что и урезанное обычное: иначе
+  // сравниваются разные промежутки и каждая категория «выше обычного».
+  const now = byCategory(within(operationsOf(data.entries, month), spanEnd(month, running)), data)
 
   // Не только сумма за прошлые месяцы, но и в скольких месяцах категория
   // вообще встречалась: разовый платёж, размазанный по шести месяцам, даёт
@@ -628,6 +638,25 @@ export function monthlyExpenses(data: MonthData, month: string, count: number): 
     cursor = previousMonth(cursor)
   }
   return bars
+}
+
+/**
+ * Последний день месяца, по который доведены записи (Р-24).
+ *
+ * Им отрезается и расход этого месяца: сравнивать расход за весь записанный
+ * месяц с обычным, урезанным до части месяца, нельзя — стороны меряют разные
+ * сроки. Именно так и вышло в первой версии Р-24: «за 1 день месяца —
+ * 44 090 ₽» при расходе за весь месяц.
+ */
+export function spanEnd(month: string, running: Running | null): string | null {
+  if (running === null) return null
+  return `${month}-${String(running.passed).padStart(2, '0')}`
+}
+
+/** Записи месяца не позже записанного дня. `end` пуст — месяц берётся целиком. */
+function within(entries: readonly Entry[], end: string | null): Entry[] {
+  if (end === null) return [...entries]
+  return entries.filter((each) => (each.date ?? '') <= end)
 }
 
 /** Сумма в базовой валюте — для показа. */

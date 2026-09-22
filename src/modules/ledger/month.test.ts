@@ -444,6 +444,35 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
     })
   })
 
+  // Первая версия Р-24 резала только обычное и давала «за 1 день месяца —
+  // 44 090 ₽» при расходе за весь месяц: стороны мерили разные сроки.
+  it('расход для сравнения берётся за тот же срок, что и урезанное обычное', () => {
+    const list = [
+      entry({ kind: 'expense', amount: 100000, date: '2026-09-05', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 500000, date: '2026-09-20', categoryId: 'food' }),
+    ]
+    const report = monthReport(data(list), '2026-09', '2026-09-22', '2026-09-10')
+    expect(report.usualExpense.amount).toBe(600000)
+    expect(report.spanExpense.amount).toBe(100000)
+  })
+
+  it('месяц записан целиком — сравнивается он же весь', () => {
+    const list = [entry({ kind: 'expense', amount: 100000, date: '2026-09-05', categoryId: 'food' })]
+    const report = monthReport(data(list), '2026-09', '2026-09-22', '2026-09-22')
+    expect(report.spanExpense.amount).toBe(report.usualExpense.amount)
+  })
+
+  it('по категориям этот месяц тоже берётся за записанный срок', () => {
+    const list = [
+      entry({ kind: 'expense', amount: 100000, date: '2026-06-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 100000, date: '2026-07-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 100000, date: '2026-08-10', categoryId: 'food' }),
+      entry({ kind: 'expense', amount: 900000, date: '2026-09-20', categoryId: 'food' }),
+    ]
+    const report = overUsual(data(list), '2026-09', { today: '2026-09-22', through: '2026-09-10' })
+    expect(report.over[0]?.now).toBe(0)
+  })
+
   it('обычное урезается до записанного срока, а не достраивается до месяца', () => {
     expect(toDate(3000000, { passed: 15, elapsed: 22, total: 30 })).toBe(1500000)
     expect(toDate(3000000, null)).toBe(3000000)

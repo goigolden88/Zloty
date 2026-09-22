@@ -123,7 +123,7 @@ export function Entries() {
           </div>
 
           {searching ? (
-            <Search query={query} />
+            <Search query={query} entries={entries.all} onEdit={setEditing} editing={editing} />
           ) : (
             <>
               <RecurringBlock ledger={ledger.data} entries={entries.all} month={month} />
@@ -161,12 +161,27 @@ export function Entries() {
  * ищется цифрами и словами, а ищется и то, чего на экране нет, — исходная
  * строка выписки и заметка.
  */
-function Search({ query }: { query: string }) {
+function Search({
+  query,
+  entries,
+  onEdit,
+  editing,
+}: {
+  query: string
+  entries: readonly Entry[]
+  onEdit: (entry: Entry) => void
+  editing: Entry | null
+}) {
   // Слепок базы берёт ядро: строки ленты знают все хранилища сразу, и когда
   // долги и снимки капитала добавят свои, поиск найдёт их, не меняя экрана.
   const feed = useFeed(feedItems)
   const found = filterFeed(feed.items, { query })
   const groups = groupFeed(found)
+
+  // Строка ленты несёт id записи, поэтому правка из поиска — не догадка
+  // по тексту, а та же запись. Когда в ленте появятся долги и снимки,
+  // их строки просто не найдутся среди операций, и кнопки у них не будет.
+  const byId = new Map(entries.filter((each) => !each.deleted).map((each) => [each.id, each]))
 
   if (feed.status === 'loading') return <p className="muted">Ищу…</p>
   if (feed.status === 'failed') return <p className="error">{feed.error}</p>
@@ -178,20 +193,33 @@ function Search({ query }: { query: string }) {
   return (
     <>
       <p className="basis">Найдено: {recordsText(found.length)} — по всей истории, а не за месяц</p>
+      {editing !== null && (
+        <p className="basis">Правка открыта выше — над строкой поиска.</p>
+      )}
       {groups.map((group) => (
         <div key={group.month ?? 'без даты'} className="block">
           <h2>{feedHeading(group.month)}</h2>
           <ul className="plain">
-            {group.items.map((item) => (
-              <li key={item.id} className="line">
-                <div className="line__main">
-                  <b>{item.title}</b>
-                  <div className="muted">
-                    {feedDateText(item.date)} · {item.detail}
+            {group.items.map((item) => {
+              const entry = byId.get(item.id)
+              return (
+                <li key={item.id} className="line">
+                  <div className="line__main">
+                    <b>{item.title}</b>
+                    <div className="muted">
+                      {feedDateText(item.date)} · {item.detail}
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
+                  {entry && (
+                    <div className="row row--wrap">
+                      <button type="button" onClick={() => onEdit(entry)}>
+                        Изменить
+                      </button>
+                    </div>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         </div>
       ))}

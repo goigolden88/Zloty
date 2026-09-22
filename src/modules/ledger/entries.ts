@@ -356,18 +356,44 @@ export function lastDayOn(entries: readonly Entry[], accountId: string): string 
  * не грузил», и «дальше не тратил». Тот же вывод уже делает промпт, и
  * на нём стоит вся дозагрузка выписок; экран его только называет.
  */
+export type Recorded = {
+  /** День, по который доведены все счета. */
+  day: string
+  /** Счёт, который отстал сильнее всех: его и надо догрузить. */
+  account: Account
+}
+
 export function recordedThrough(
   entries: readonly Entry[],
   accounts: readonly Account[],
-): string | null {
-  let earliest: string | null = null
+): Recorded | null {
+  let earliest: Recorded | null = null
 
   for (const account of accounts) {
     if (account.deleted || account.archived || account.ledgerOnly) continue
-    const last = lastDayOn(entries, account.id)
+    const last = lastDatedDayOn(entries, account.id)
     if (last === null) continue
-    if (earliest === null || last < earliest) earliest = last
+    if (earliest === null || last < earliest.day) earliest = { day: last, account }
   }
 
   return earliest
+}
+
+/**
+ * Последний день операции с датой. В отличие от `lastDayOn`, итоги периодов
+ * не считаются.
+ *
+ * Итог периода говорит «за этот промежуток потрачено столько-то», а не «этот
+ * день записан». Счёт прежней таблицы состоит из одних таких итогов, и его
+ * `period.to` утягивал срок на недели назад: экран объявлял месяц записанным
+ * по одному дню, хотя выписки доведены до восемнадцатого.
+ */
+function lastDatedDayOn(entries: readonly Entry[], accountId: string): string | null {
+  let last: string | null = null
+  for (const entry of entries) {
+    if (entry.deleted || entry.accountId !== accountId || entry.kind === 'transfer') continue
+    if (!entry.date) continue
+    if (last === null || entry.date > last) last = entry.date
+  }
+  return last
 }

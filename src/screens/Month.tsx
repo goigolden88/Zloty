@@ -4,7 +4,7 @@ import { CHANGES } from '../changes.ts'
 import type { Account } from '../app/model.ts'
 import { SYNCED_STORES } from '../app/model.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
-import { recordedThrough } from '../modules/ledger/entries.ts'
+import { recordedThrough, type Recorded } from '../modules/ledger/entries.ts'
 import { incomeNotEntered, type RecurringData } from '../modules/ledger/recurring.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
@@ -154,11 +154,11 @@ function Report({
   // По какое число доведены записи — тем же правилом, каким промпт импорта
   // решает, с какого дня брать выписку (Р-24). Календарь и записи расходятся,
   // и сравнивать надо по записанному.
-  const through = recordedThrough(data.entries, accounts)
-  const report = monthReport(data, month, now, through)
+  const recorded = recordedThrough(data.entries, accounts)
+  const report = monthReport(data, month, now, recorded?.day ?? null)
   const seen = observations(data, month)
   const usual = usualMonth(seen.list, seen.missing)
-  const over = overUsual(data, month, { today: now, through })
+  const over = overUsual(data, month, { today: now, through: recorded?.day ?? null })
   const bars = monthlyExpenses(data, month, BARS)
 
   const show = (amount: number) =>
@@ -176,7 +176,7 @@ function Report({
         </button>
       </div>
 
-      <RunningNote running={report.running} through={through} />
+      <RunningNote running={report.running} recorded={recorded} />
 
       {/* Главный ответ — первым. Всё остальное объясняет его. */}
       <div className="block">
@@ -260,7 +260,7 @@ function Report({
             <p className="big">{show(usual.monthly)}</p>
             <p className="basis">{usualBasis(usual.months, usual.periods)}</p>
             <MissingNote list={usual.missing} />
-            {report.usualExpense.entries > 0 && <ThisMonth report={report} usual={usual.monthly} show={show} />}
+            {report.spanExpense.entries > 0 && <ThisMonth report={report} usual={usual.monthly} show={show} />}
           </>
         )}
       </div>
@@ -309,7 +309,7 @@ function Report({
  * стоит на записанном сроке, а не на календарном. Молчать об этом нельзя:
  * дни, которых в базе нет, иначе читаются как дни без трат.
  */
-function RunningNote({ running, through }: { running: Running | null; through: string | null }) {
+function RunningNote({ running, recorded }: { running: Running | null; recorded: Recorded | null }) {
   if (running === null) return null
 
   const { passed, elapsed, total } = running
@@ -326,14 +326,18 @@ function RunningNote({ running, through }: { running: Running | null; through: s
     return <p className="basis">{lived} Сравнения с обычным месяцем ниже урезаны до этого же срока.</p>
   }
 
+  // Счёт называется по имени: без него «доведены по первое» — загадка,
+  // а с ним — понятно, какую выписку грузить (Р-24).
   return (
     <p className="error">
-      {lived} Но записи доведены только по {through === null ? 'ничему' : formatDate(through)}
+      {lived} Но записи доведены только по{' '}
+      {recorded === null ? 'ничему' : `${formatDate(recorded.day)} — по счёту «${recorded.account.name}»`}
       {passed === 0
-        ? ' — за этот месяц их нет вовсе'
+        ? ': за этот месяц их нет вовсе'
         : `: не хватает ${behind} ${plural(behind, ['дня', 'дней', 'дней'])}`}
-      . Расход ниже посчитан по {passed} {plural(passed, ['дню', 'дням', 'дням'])}, и обычный месяц
-      урезан до того же срока — иначе незагруженные дни считались бы днями без трат.
+      . С обычным месяцем сравнивается расход за эти {passed}{' '}
+      {plural(passed, ['день', 'дня', 'дней'])}, а не за весь месяц: иначе стороны мерили бы
+      разные сроки.
     </p>
   )
 }
@@ -409,7 +413,9 @@ function ThisMonth({
   show: (amount: number) => string
 }) {
   const running = report.running
-  const now = report.usualExpense.amount
+  // За записанный срок, а не за весь месяц: он и сравнивается с урезанным
+  // обычным (Р-24). Месяц записан целиком — это одно и то же число.
+  const now = report.spanExpense.amount
   const against = toDate(usual, running)
   const word = now > against ? 'больше' : 'меньше'
   const delta = show(Math.abs(now - against))

@@ -822,9 +822,18 @@ async function scenario(profile) {
     // Второй банк, чья выписка кончилась раньше: по нему и считается,
     // по какое число доведены записи (Р-24). Выписки приходят вразнобой,
     // и это не выдуманный случай, а обычный.
-    accounts: [{ name: 'Зелёный банк', currency: 'RUB', kind: 'savings' }],
+    // «Тетрадь» — счёт с итогом периода и БЕЗ пометки «счёт истории»:
+    //    так бывает, когда галочку забыли. Его `period.to` не должен
+    //    утягивать срок назад (Р-24): итог говорит «за промежуток
+    //    потрачено столько-то», а не «этот день записан».
+    accounts: [
+      { name: 'Зелёный банк', currency: 'RUB', kind: 'savings' },
+      { name: 'Тетрадь', currency: 'RUB', kind: 'savings' },
+    ],
     entries: [
       { kind: 'expense', account: 'Зелёный банк', amount: 300, date: '2026-09-10', category: 'Еда' },
+      { kind: 'expense', account: 'Зелёный банк', amount: 200, date: '2026-09-08', category: 'Ветеринар' },
+      { kind: 'expense', account: 'Тетрадь', amount: 1000, periodFrom: '2026-08-05', periodTo: '2026-09-03' },
       { kind: 'expense', account: 'Синий банк', amount: 1000, date: '2026-03-12', category: 'Еда' },
       { kind: 'expense', account: 'Синий банк', amount: 1000, date: '2026-04-12', category: 'Еда' },
       { kind: 'expense', account: 'Синий банк', amount: 1000, date: '2026-05-12', category: 'Еда' },
@@ -833,7 +842,7 @@ async function scenario(profile) {
     ],
     checks: [
       { account: 'Синий банк', from: '2026-03-01', to: '2026-05-31', income: 50, expense: 23000 },
-      { account: 'Зелёный банк', from: '2026-09-01', to: '2026-09-30', income: 0, expense: 300 },
+      { account: 'Зелёный банк', from: '2026-09-01', to: '2026-09-30', income: 0, expense: 500 },
     ],
   })
 
@@ -886,10 +895,19 @@ async function scenario(profile) {
     firstOfMonth || (has(usual, 'записи доведены только по') && /не хватает \d+ дн/.test(usual)),
     line(usual, 'записи доведены только по'),
   )
+  // Без имени счёта «доведено по десятое» — загадка: непонятно, какую
+  // выписку грузить (Р-24).
   check(
-    'и говорит, по скольким дням посчитан расход',
-    firstOfMonth || /Расход ниже посчитан по \d+ дн/.test(usual),
-    line(usual, 'Расход ниже посчитан'),
+    'и называет счёт, который отстал сильнее всех',
+    firstOfMonth || has(usual, 'по счёту «Зелёный банк»'),
+    line(usual, 'по счёту'),
+  )
+  // Первая версия Р-24 резала только обычное, и расход за весь месяц
+  // сравнивался с обычным за один день.
+  check(
+    'и говорит, что сравнивается расход за тот же срок, а не за весь месяц',
+    firstOfMonth || /сравнивается расход за эти \d+ дн/.test(usual),
+    line(usual, 'сравнивается расход за эти'),
   )
 
   check(
@@ -916,6 +934,35 @@ async function scenario(profile) {
       return { whole, part };
     })()
   `)
+  // Слова «сравнивается расход за эти 10 дней» стоят на месте и тогда,
+  // когда расход взят за весь месяц: сторож на текст пропавшее число
+  // не ловит. Поэтому сравниваются сами числа (Р-24).
+  const sides = await run(`
+    (() => {
+      const number = (text) => {
+        const found = String(text).replace(/\\s|\\u00a0|\\u202f/g, '').match(/(\\d+(?:,\\d+)?)/);
+        return found ? Number(found[1].replace(',', '.')) : null;
+      };
+      const row = [...document.querySelectorAll('li')].find((el) => el.textContent.includes('Расход обычный'));
+      const whole = row ? number(row.lastElementChild?.textContent) : null;
+      const head = [...document.querySelectorAll('h2')].find((el) => el.textContent.includes('Обычный месяц'));
+      const line = head && [...head.closest('.block').querySelectorAll('p')]
+        .find((el) => el.textContent.includes('месяца —'));
+      const part = line ? number(line.textContent.split('месяца —')[1]) : null;
+      return { whole, part };
+    })()
+  `)
+  check(
+    'расход для сравнения меньше расхода за весь месяц, а не равен ему',
+    firstOfMonth ||
+      (sides !== null &&
+        typeof sides.whole === 'number' &&
+        typeof sides.part === 'number' &&
+        sides.part > 0 &&
+        sides.part < sides.whole),
+    `за месяц ${sides?.whole}, за записанный срок ${sides?.part}`,
+  )
+
   check(
     'и урезанное обычное — число меньше целого, а не то же самое',
     firstOfMonth ||
@@ -1049,6 +1096,16 @@ async function scenario(profile) {
   const found = await screen()
   check('поиск находит по описанию из выписки', has(found, '120,50'), line(found, '120,50'))
   check('и говорит, что искал по всей истории', has(found, 'по всей истории, а не за месяц'), line(found, 'Найдено'))
+
+  // Найденное надо уметь поправить: «Неразобранные поступления» ищутся
+  // поиском, а разбирать их было негде — кнопки правки у результата не было.
+  const editable = await run(`
+    (() => {
+      const row = [...document.querySelectorAll('li')].find((el) => el.textContent.includes('120,50'));
+      return !!(row && [...row.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Изменить'));
+    })()
+  `)
+  check('найденную запись можно поправить прямо из поиска', editable === true, 'кнопка «Изменить» у результата')
 
   await act(`
     const field = document.querySelector('input[placeholder="Найти по всей истории"]');
