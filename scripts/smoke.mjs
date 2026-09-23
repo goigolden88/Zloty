@@ -1674,22 +1674,26 @@ async function scenario(profile) {
   await offline(true)
   await act(`byText('button', 'Подтянуть курсы').click();`)
   await waitFor(`document.body.innerText.includes('источник не ответил')`, 30_000)
+  // Сводка ядра разбирает файл сама, после ответа источника, — ждём и её.
+  await waitFor(`document.body.innerText.includes('Добавлять нечего')`, 5_000)
   const capital6 = await screen()
   await offline(false)
   check('источник не ответил — так и сказано, по дате', has(capital6, 'сегодня: источник не ответил'), line(capital6, 'источник не ответил'))
-  check('и записывать нечего', has(capital6, 'Добавлять нечего') && !has(capital6, 'Записать курсы'), line(capital6, 'Добавлять нечего'))
+  const loadIdle = await run(`[...document.querySelectorAll('button')].find((b) => b.textContent.startsWith('Загрузить '))?.disabled === true`)
+  check('и записывать нечего — сводка ядра, кнопка не нажимается', has(capital6, 'Добавлять нечего') && loadIdle === true, line(capital6, 'Добавлять нечего'))
 
-  // Источник ответил (ответ подменён перехватом, числа выдуманы): сводка до
-  // записи называет каждый курс с датой, а после записи — куда он лёг.
+  // Источник ответил (ответ подменён перехватом, числа выдуманы): до записи
+  // названы каждый курс с датой и сводка ядра (Я-07), после — куда он лёг.
   // Иначе подтянутое на сегодня не видно нигде: блок курсов показывает дату
   // открытого снимка (находка человека на телефоне, 23.09.2026).
   ratesReply = JSON.stringify({ date: '2026-09-21', rub: { usd: 0.0125, btc: 0.0000002 } })
   await send('Fetch.enable', { patterns: [{ urlPattern: '*currency-api*' }] })
   await act(`byText('button', 'Подтянуть курсы').click();`)
-  await waitFor(`document.body.innerText.includes('Добавится курсов')`, 15_000)
+  await waitFor(`document.body.innerText.includes('Добавится: 2')`, 15_000)
   const fetched = (await screen()).replace(/ /g, ' ')
-  check('сводка источника перечисляет курсы с датой: 21.09.2026 — 80 RUB за USD', has(fetched, '21.09.2026: 80 RUB за USD'), line(fetched, '21.09.2026'))
-  await act(`byText('button', 'Записать курсы').click();`)
+  check('ответ источника перечислен с датой: 21.09.2026 — 80 RUB за USD', has(fetched, '21.09.2026: 80 RUB за USD'), line(fetched, '21.09.2026'))
+  check('сводка курсов — ядра, та же, что у выписки: «Добавится: 2 курса»', has(fetched, 'Добавится: 2 курса'), line(fetched, 'Добавится'))
+  await act(`startsWith('button', 'Загрузить ').click();`)
   await sleep(900)
   const written = (await screen()).replace(/ /g, ' ')
   await send('Fetch.disable')

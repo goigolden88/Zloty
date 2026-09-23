@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
-import type { Account, Currency, Note, Rate } from '../app/model.ts'
+import type { Account, Currency, Note, Rate, StoreRecord } from '../app/model.ts'
 import { capitalDates, staleOf, type Holding } from '../modules/capital/capital.ts'
 import { createNote, noteProblem, notesOn, updateNote } from '../modules/capital/notes.ts'
 import { draftRow, rowWrites, unchanged, withDeferred, type RowDraft } from '../modules/capital/row.ts'
@@ -11,13 +11,15 @@ import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useRates } from '../modules/ledger/useRates.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
-import { fetchRates, RATE_SOURCE } from '../modules/money/currency-api.ts'
+import { fetchRates, RATE_SOURCE, type Fetched } from '../modules/money/currency-api.ts'
 import { rateProblem, ratesOn, rateWrite } from '../modules/money/rate-records.ts'
 import { RATE_MAX_AGE_DAYS, type RateLeg } from '../modules/money/rates.ts'
-import { planImport, type Data } from '../registry.ts'
+import { planImport } from '../registry.ts'
+import type { ImportPlan } from '../shared/core/importing.ts'
 import { days, formatDate, formatDateLoose, nowIso, plural, today } from '../shared/core/dates.ts'
 import { ulid } from '../shared/core/id.ts'
 import { BarChart, type BarItem } from '../shared/ui/BarChart.tsx'
+import { ImportSummary } from '../shared/screens/ImportRecords.tsx'
 import { Fold } from '../shared/ui/Fold.tsx'
 import { capitalSeries, fullCapitalOn, type FullCapital, type FullData } from '../summary/capital.ts'
 
@@ -659,29 +661,32 @@ function RateForm({ date, codes, base, all }: { date: string; codes: readonly st
   )
 }
 
-type Pending = { plan: ReturnType<typeof planImport>; failed: { date: string; reason: string }[]; missing: string[] }
-
+/**
+ * «Подтянуть курсы» (Р-38). Ответ источника — обычный файл импорта: его
+ * проверяет и пишет та же сводка ядра, что у выписки (Р-09, Я-07 ядра).
+ * Своё здесь — только то, чего сводка знать не может: что ответил источник,
+ * чего у него не нашлось и куда легли курсы после записи.
+ */
 function FetchRates({ dates, codes, base }: { dates: readonly string[]; codes: readonly string[]; base: string }) {
   const [busy, setBusy] = useState(false)
-  const [pending, setPending] = useState<Pending | null>(null)
+  const [asked, setAsked] = useState<Fetched | null>(null)
+  // Номер запроса — ключ сводки: тот же ответ, полученный заново, разбирается
+  // по свежему слепку базы, а не показывает прежнюю сводку.
+  const [round, setRound] = useState(0)
   const [note, setNote] = useState('')
 
   async function ask() {
     setBusy(true)
     setNote('')
-    setPending(null)
+    setAsked(null)
     const fetched = await fetchRates([...dates, 'latest'], base, codes)
-    // Та же проверка, что у выписки: ответ источника — обычный файл импорта (Р-09).
-    const snapshot = (await db.exportAll()).data as Data
-    const plan = planImport(fetched.file, snapshot, { newId: ulid, now: nowIso() })
-    setPending({ plan, failed: fetched.failed, missing: fetched.missing })
+    setRound((was) => was + 1)
+    setAsked(fetched)
     setBusy(false)
   }
 
-  async function apply() {
-    if (!pending) return
-    const rates = pending.plan.writes.rates ?? []
-    await db.putMany('rates', rates)
+  function applied(plan: ImportPlan<StoreRecord>) {
+    const rates = plan.writes.rates ?? []
     // Куда легли курсы — словами: блок выше показывает курсы только на дату
     // открытого снимка, и подтянутое на сегодня иначе не видно нигде.
     const dates = [...new Set(rates.map((each) => each.date))].sort().map((each) => formatDate(each))
@@ -689,10 +694,9 @@ function FetchRates({ dates, codes, base }: { dates: readonly string[]; codes: r
       `Записано курсов: ${rates.length} — на ${dates.join(', ')}. Они видны в «Курсах» на эту дату, а пересчёт ` +
         `возьмёт их для снимков с этой даты и позже — не старше ${days(RATE_MAX_AGE_DAYS)}.`,
     )
-    setPending(null)
+    setAsked(null)
   }
 
-  const count = pending?.plan.writes.rates?.length ?? 0
   return (
     <div className="form">
       <p className="muted">
@@ -705,43 +709,32 @@ function FetchRates({ dates, codes, base }: { dates: readonly string[]; codes: r
           {busy ? 'Спрашиваю…' : 'Подтянуть курсы'}
         </button>
       </div>
-      {pending && (
+      {asked && (
         <>
-          <p>{count === 0 ? 'Добавлять нечего.' : `Добавится курсов: ${count}.`}</p>
-          {count > 0 && (
-            <ul className="plain">
-              {(pending.plan.writes.rates ?? []).map((each) => (
-                <li key={each.id} className="basis">
-                  {formatDate(each.date)}: {each.rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} {each.to} за{' '}
-                  {each.from}
-                </li>
-              ))}
-            </ul>
+          {/* Что сказал источник — каждый курс с датой. Уже лежащий в базе здесь
+              тоже есть, а сводка ниже назовёт его «уже есть — пропущено». */}
+          {asked.lines.length > 0 && (
+            <>
+              <p>Источник ответил:</p>
+              <ul className="plain">
+                {asked.lines.map((each) => (
+                  <li key={`${each.date}:${each.from}`} className="basis">
+                    {formatDate(each.date)}: {each.rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} {each.to} за{' '}
+                    {each.from}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
-          {pending.plan.skipped > 0 && <p className="muted">Уже есть — не перезаписаны: {pending.plan.skipped}.</p>}
-          {pending.failed.map((each) => (
+          {asked.failed.map((each) => (
             <p key={each.date} className="error">
               {each.date}: {each.reason}
             </p>
           ))}
-          {pending.missing.length > 0 && (
-            <p className="muted">У источника нет курса: {pending.missing.join(', ')} — внесите руками.</p>
+          {asked.missing.length > 0 && (
+            <p className="muted">У источника нет курса: {asked.missing.join(', ')} — внесите руками.</p>
           )}
-          {pending.plan.issues.map((each, index) => (
-            <p key={index} className="error">
-              {each.title}: {each.reason}
-            </p>
-          ))}
-          <div className="form__actions">
-            <button type="button" onClick={() => setPending(null)}>
-              Отмена
-            </button>
-            {count > 0 && (
-              <button type="button" className="btn--primary" onClick={() => void apply()}>
-                Записать курсы
-              </button>
-            )}
-          </div>
+          <ImportSummary key={round} text={asked.file} planImport={planImport} onApplied={applied} onCancel={() => setAsked(null)} />
         </>
       )}
       {note && <p className="note">{note}</p>}
