@@ -98,10 +98,11 @@ describe('раздел «balances»', () => {
     expect(plan.issues[0]?.reason).toBe('сумма «-100» — не число без знака')
   })
 
-  it('лишние знаки округляются, и это названо', () => {
+  it('лишние знаки округляются, и это названо заметкой, а не отказом (Я-07 ядра)', () => {
     const plan = importBalances([{ account: 'Банк', date: '2026-09-01', amount: 100.555 }], data(), ctx)
     expect(plan.writes.balances?.[0]?.amount).toBe(10056)
-    expect(plan.issues.map((each) => each.title)).toEqual(['округление'])
+    expect(plan.notes?.map((each) => each.title)).toEqual(['округление'])
+    expect(plan.issues).toEqual([])
   })
 
   it('заметка к снимку переносится', () => {

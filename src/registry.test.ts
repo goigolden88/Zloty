@@ -81,3 +81,81 @@ describe('курсы из публичного источника (Р-38)', () =
     expect(plan.writes.rates?.map((each) => each.source)).toEqual([RATE_SOURCE, RATE_SOURCE])
   })
 })
+
+describe('исходы импорта своими словами (Я-07 ядра)', () => {
+  const rub = { id: 'rub', updatedAt: AT, code: 'RUB', name: 'Рубль', decimals: 2, order: 0 }
+  const bank = { id: 'bank', updatedAt: AT, name: 'Банк', currency: 'RUB', kind: 'savings' as const, order: 0 }
+  const food = { id: 'food', updatedAt: AT, name: 'Еда', side: 'expense' as const, order: 0 }
+  const total = {
+    id: 'total',
+    updatedAt: AT,
+    kind: 'expense' as const,
+    accountId: 'bank',
+    money: { amount: 100000, currency: 'RUB' },
+    period: { from: '2026-09-01', to: '2026-09-30' },
+  }
+
+  function base(): Data {
+    const data = empty()
+    data.currencies = [rub]
+    data.accounts = [bank]
+    data.categories = [food]
+    data.entries = [total]
+    return data
+  }
+
+  /** Выписка «Банка» за сентябрь: две траты, сверка сходится, одна сумма с лишним знаком. */
+  const statement = (extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      format: 'zloty-import',
+      version: 1,
+      entries: [
+        { kind: 'expense', account: 'Банк', amount: 600.004, date: '2026-09-10', category: 'Еда', bankText: 'ОДНА' },
+        { kind: 'expense', account: 'Банк', amount: 500, date: '2026-09-20', category: 'Еда', bankText: 'ДВЕ' },
+      ],
+      checks: [{ account: 'Банк', from: '2026-09-01', to: '2026-09-30', opening: 2000, closing: 900 }],
+      ...extra,
+    })
+
+  it('округление и замена итога — заметки: в отказы не попадают', () => {
+    const plan = planImport(statement(), base(), ctx)
+    expect(plan.issues).toEqual([])
+    expect(plan.notes?.map((each) => each.title).sort()).toEqual(['итог периода', 'округление'])
+  })
+
+  it('«Удалится» сходится с надгробиями в записях', () => {
+    const plan = planImport(statement(), base(), ctx)
+    const tombstones = (plan.writes.entries ?? []).filter((each) => each.deleted)
+    expect(tombstones.map((each) => each.id)).toEqual(['total'])
+    expect(plan.removed).toEqual([{ count: 1, forms: ['итог периода', 'итога периода', 'итогов периода'] }])
+  })
+
+  it('отметка сверки на счёте из базы — «Изменится», и он же лежит в записях', () => {
+    const plan = planImport(statement(), base(), ctx)
+    expect(plan.writes.accounts?.map((each) => [each.id, each.loadedThrough])).toEqual([['bank', '2026-09-30']])
+    expect(plan.changed).toEqual([{ count: 1, forms: ['счёт', 'счёта', 'счетов'] }])
+    expect(plan.added.some((each) => each.forms[0] === 'счёт')).toBe(false)
+  })
+
+  it('счёт, заведённый этим же файлом, — новый, а не правка', () => {
+    const data = base()
+    data.accounts = []
+    data.entries = []
+    const plan = planImport(statement({ accounts: [{ name: 'Банк', currency: 'RUB', kind: 'savings' }] }), data, ctx)
+    expect(plan.writes.accounts).toHaveLength(1)
+    expect(plan.writes.accounts?.[0]?.loadedThrough).toBe('2026-09-30')
+    expect(plan.added.find((each) => each.forms[0] === 'счёт')?.count).toBe(1)
+    expect(plan.changed ?? []).toEqual([])
+  })
+
+  it('та же выписка второй раз ничего не меняет и не удаляет', () => {
+    const first = planImport(statement(), base(), ctx)
+    const data = base()
+    data.accounts = first.writes.accounts ?? []
+    data.entries = first.writes.entries ?? []
+    const again = planImport(statement(), data, ctx)
+    expect(again.changed ?? []).toEqual([])
+    expect(again.removed ?? []).toEqual([])
+    expect(again.skipped).toBe(2)
+  })
+})

@@ -173,10 +173,11 @@ describe('записи учёта', () => {
     expect(plan.writes.entries?.[0]?.categoryId).toBe(plan.writes.categories?.[0]?.id)
   })
 
-  it('лишние знаки округляются и это названо, а не проглочено', () => {
+  it('лишние знаки округляются и это названо заметкой, а не отказом (Я-07 ядра)', () => {
     const plan = importEntries([{ ...line, amount: '349.905' }], base(), context())
     expect(plan.writes.entries?.[0]?.money.amount).toBe(34991)
-    expect(plan.issues.some((each) => each.reason.includes('округлена'))).toBe(true)
+    expect(plan.notes?.some((each) => each.text.includes('округлена'))).toBe(true)
+    expect(plan.issues).toEqual([])
   })
 
   it('итог за период приходит с границами вместо даты', () => {

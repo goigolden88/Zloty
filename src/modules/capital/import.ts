@@ -145,19 +145,24 @@ export function importBalances(raw: unknown, data: CapitalImportData, ctx: Impor
     created.push(made)
   }
 
-  if (rounded > 0) {
-    issues.push({
-      section,
-      title: 'округление',
-      reason: `у ${rounded} ${plural(rounded, BALANCE_FORMS)} было больше знаков после запятой, чем у валюты счёта — сумма округлена`,
-    })
-  }
+  // Снимки загрузятся — это не отказ, а то, на что стоит посмотреть (Я-07 ядра).
+  const notes =
+    rounded > 0
+      ? [
+          {
+            section,
+            title: 'округление',
+            text: `у ${rounded} ${plural(rounded, BALANCE_FORMS)} было больше знаков после запятой, чем у валюты счёта — сумма округлена`,
+          },
+        ]
+      : []
 
   return {
     writes: { balances: created },
     added: [{ count: created.length, forms: BALANCE_FORMS }].filter((each) => each.count > 0),
     skipped,
     issues,
+    notes,
   }
 }
 

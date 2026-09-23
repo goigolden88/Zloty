@@ -12,9 +12,10 @@
  * «Операций». Строки всё равно собираются здесь — это договор семьи,
  * и когда появятся долги и снимки, они лягут в тот же список.
  *
- * Образец — `registry.ts` «Трапезы» (её Р-53). Своё здесь — замена итога
- * периода операциями: единственное место, где импорт не только добавляет
- * (Р-02).
+ * Образец — `registry.ts` «Трапезы» (её Р-53). Своё здесь — два места, где
+ * импорт не только добавляет: итог периода, заменённый операциями, уходит
+ * надгробием (Р-02), а сошедшаяся сверка правит счёт отметкой `loadedThrough`
+ * (Р-26). Оба названы в сводке своим словом — `removed` и `changed` (Я-07 ядра).
  */
 
 import type { Snapshot } from './shared/core/db.ts'
@@ -34,6 +35,7 @@ import {
 import { lastDayOn } from './modules/ledger/entries.ts'
 import { entryFeed, entryMarkdown, ENTRY_KIND, type FeedData } from './modules/ledger/feed.ts'
 import {
+  ACCOUNT_FORMS,
   accountsImportSpec,
   applyChecks,
   categoriesImportSpec,
@@ -51,6 +53,7 @@ import {
   loadedThroughUpdates,
   ratesImportSpec,
   replacedTotals,
+  TOTAL_FORMS,
   type LedgerImportData,
 } from './modules/ledger/import.ts'
 
@@ -215,6 +218,9 @@ function withChecks(plan: Plan, raw: unknown, ledger: LedgerImportData): Plan {
     ...pending.filter((each) => !marked.some((mark) => mark.id === each.id)),
     ...marked,
   ]
+  // Правка — только у счёта, который уже лежит в базе. Заведённый этим же
+  // файлом — новый, и сводка уже назвала его в «Добавится».
+  const edited = marked.filter((each) => !pending.some((fresh) => fresh.id === each.id)).length
 
   return {
     ...plan,
@@ -223,15 +229,16 @@ function withChecks(plan: Plan, raw: unknown, ledger: LedgerImportData): Plan {
       each.forms === ENTRY_FORMS ? { ...each, count: each.count - (incoming.length - kept.length) } : each,
     ).filter((each) => each.count > 0),
     issues: [...plan.issues, ...issues, ...refused],
+    changed: [...(plan.changed ?? []), { count: edited, forms: ACCOUNT_FORMS }].filter((each) => each.count > 0),
   }
 }
 
 /**
  * Итоги периодов, которые заменяют пришедшие операции (Р-02).
  *
- * Единственное место, где импорт не только добавляет: операции подробнее
- * итога, и держать оба — считать расход дважды. Итог уходит надгробием,
- * а разница называется в сводке, а не проглатывается.
+ * Операции подробнее итога, и держать оба — считать расход дважды. Итог
+ * уходит надгробием и считается в «Удалится», а разница называется
+ * заметкой: запись загрузится, отказа здесь нет (Я-07 ядра).
  */
 function withReplacedTotals(plan: Plan, data: Data, now: string): Plan {
   const incoming = plan.writes.entries ?? []
@@ -243,9 +250,10 @@ function withReplacedTotals(plan: Plan, data: Data, now: string): Plan {
   return {
     ...plan,
     writes: { ...plan.writes, entries: [...incoming, ...tombstones] },
-    issues: [
-      ...plan.issues,
-      ...notes.map((reason) => ({ section: entriesImportSpec.section, title: 'итог периода', reason })),
+    removed: [...(plan.removed ?? []), { count: tombstones.length, forms: TOTAL_FORMS }],
+    notes: [
+      ...(plan.notes ?? []),
+      ...notes.map((text) => ({ section: entriesImportSpec.section, title: 'итог периода', text })),
     ],
   }
 }

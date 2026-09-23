@@ -58,9 +58,15 @@ export type LedgerImportData = {
 /** Склонение записей учёта. Вынесено наружу: по нему реестр узнаёт свою строку в сводке. */
 export const ENTRY_FORMS: [string, string, string] = ['запись', 'записи', 'записей']
 
+/** Склонение счетов: реестр называет им и заведённые, и изменённые счета. */
+export const ACCOUNT_FORMS: [string, string, string] = ['счёт', 'счёта', 'счетов']
+
+/** Склонение итогов периода — тех, что уходят надгробием, когда их заменяют операции. */
+export const TOTAL_FORMS: [string, string, string] = ['итог периода', 'итога периода', 'итогов периода']
+
 const FORMS = {
   currency: ['валюта', 'валюты', 'валют'] as [string, string, string],
-  account: ['счёт', 'счёта', 'счетов'] as [string, string, string],
+  account: ACCOUNT_FORMS,
   category: ['категория', 'категории', 'категорий'] as [string, string, string],
   entry: ENTRY_FORMS,
   rate: ['курс', 'курса', 'курсов'] as [string, string, string],
@@ -586,19 +592,23 @@ export function importEntries(raw: unknown, data: LedgerImportData, ctx: ImportC
     created.push({ ...draft.entry, ext })
   }
 
-  if (rounded > 0) {
-    issues.push({
-      section,
-      title: 'округление',
-      reason: `у ${rounded} ${plural(rounded, FORMS.entry)} было больше знаков после запятой, чем у валюты счёта — сумма округлена`,
-    })
-  }
+  // Записи загрузятся — это не отказ, а то, на что стоит посмотреть (Я-07 ядра).
+  const notes =
+    rounded > 0
+      ? [
+          {
+            section,
+            title: 'округление',
+            text: `у ${rounded} ${plural(rounded, FORMS.entry)} было больше знаков после запятой, чем у валюты счёта — сумма округлена`,
+          },
+        ]
+      : []
   const added = [
     { count: created.length, forms: FORMS.entry },
     { count: createdCategories.length, forms: FORMS.category },
   ].filter((each) => each.count > 0)
 
-  return { writes: { entries: created, categories: createdCategories }, added, skipped, issues }
+  return { writes: { entries: created, categories: createdCategories }, added, skipped, issues, notes }
 }
 
 function kindOf(value: unknown): Entry['kind'] | null {
