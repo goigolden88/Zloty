@@ -107,8 +107,8 @@ function Body({
     return (
       <div className="note">
         <p>
-          Валют несколько, а основная не выбрана — в какой считать капитал, решаете вы. Выберите её в{' '}
-          <Link to="/books">«Счета и категории»</Link>, раздел «Настройки учёта»: там же — вторая валюта капитала.
+          Ни одной валюты не заведено — считать не в чем. Начните со <Link to="/books">«Счетов и категорий»</Link>:
+          там заводятся валюты и счета.
         </p>
       </div>
     )
@@ -166,6 +166,12 @@ function Body({
         </div>
       )}
 
+      {base.from !== 'profile' && (
+        <p className="basis">
+          итоги в {base.code} — {base.from === 'only' ? 'единственная' : 'первая'} заведённая валюта; сменить — в{' '}
+          <Link to="/books">«Настройках учёта»</Link>
+        </p>
+      )}
       <Total capital={capital} previous={previous} show={show} data={data} />
       <Parts capital={capital} show={show} currencies={data.currencies} />
       <Notes date={date} notes={notes} />
@@ -182,7 +188,7 @@ const POSITION_FORMS: [string, string, string] = ['позиция', 'позиц�
 
 function percent(change: number): string {
   const value = (change * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1, signDisplay: 'exceptZero' })
-  return `${value}%`
+  return `${value.replace('-', '−')}%`
 }
 
 function Total({
@@ -259,10 +265,12 @@ function SecondCurrency({ capital, data }: { capital: FullCapital; data: FullDat
 /** Основание пересчёта: «по 86 ₽ за USD на 01.09.2026». Через промежуточную валюту — оба курса (Р-37). */
 function legsText(legs: readonly RateLeg[], currencies: readonly Currency[]): string {
   if (legs.length === 0) return ''
+  // Курс называется так, как его внесли: «86 RUB за USD», а не перевёрнутым
+  // «0,011628 USD за RUB», даже если пересчёт шёл в обратную сторону.
   const parts = legs.map((leg) => {
-    const rate = leg.rate.toLocaleString('ru-RU', { maximumFractionDigits: leg.rate < 1 ? 6 : 2 })
-    const to = findCurrency(currencies, leg.to)
-    return `${rate} ${to?.code ?? leg.to} за ${leg.from}`
+    const [value, from, to] = leg.inverted ? [1 / leg.rate, leg.to, leg.from] : [leg.rate, leg.from, leg.to]
+    const rate = value.toLocaleString('ru-RU', { maximumFractionDigits: value < 1 ? 6 : 2 })
+    return `${rate} ${findCurrency(currencies, to)?.code ?? to} за ${from}`
   })
   const dates = [...new Set(legs.map((leg) => leg.date))].map((each) => formatDate(each))
   return `по ${parts.join(' и ')} на ${dates.join(' и ')}`

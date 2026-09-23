@@ -17,6 +17,7 @@
 import { nowIso } from '../../shared/core/dates.ts'
 import { ulid } from '../../shared/core/id.ts'
 import type { Currency, CurrencyCode, Profile } from '../../app/model.ts'
+import { sortedCurrencies } from './ledger.ts'
 
 /** Календарный месяц: отчётный период начинается первым числом. */
 export const DEFAULT_PERIOD_START_DAY = 1
@@ -56,15 +57,20 @@ export function extraProfiles(list: readonly Profile[]): Profile[] {
  * (Р-07): человек должен видеть, откуда взялась валюта, а не считать,
  * что её кто-то выбрал за него.
  *
- * Валют несколько, а настроек нет — вот тут выбор есть, и делает его
- * человек, а не приложение.
+ * Валют несколько, а настроек нет — итоги в **первой заведённой** (Р-41):
+ * та, с которой человек начал учёт, почти всегда та, в которой он живёт.
+ * Останавливать «Месяц» и «Капитал» до похода в настройки — неудобно, а
+ * зашить рубль в код нельзя: у друга своя валюта (Р-04, п. 4). Экран
+ * называет основание и то, где это меняется.
  */
 export type BaseCurrency =
   /** Выбрана в настройках учёта. */
   | { code: CurrencyCode; from: 'profile' }
   /** Настроек нет, но валюта в справочнике одна. */
   | { code: CurrencyCode; from: 'only' }
-  /** Считать не в чем: валют нет вовсе или их несколько, а выбор не сделан. */
+  /** Настроек нет, валют несколько — первая заведённая (Р-41). */
+  | { code: CurrencyCode; from: 'first' }
+  /** Считать не в чем: валют нет вовсе. */
   | { pick: CurrencyCode[] }
 
 export function baseCurrencyOf(
@@ -81,7 +87,10 @@ export function baseCurrencyOf(
   const only = live.length === 1 ? live[0] : undefined
   if (only) return { code: only.code, from: 'only' }
 
-  return { pick: live.map((each) => each.code) }
+  const first = sortedCurrencies(live)[0]
+  if (first) return { code: first.code, from: 'first' }
+
+  return { pick: [] }
 }
 
 /** Что вводит человек. Валюта обязательна, остальное — по желанию. */

@@ -97,6 +97,12 @@ describe('капитал на дату (Р-39)', () => {
     expect(capitalOn(data(noWallet), '2026-09-01').without.map((each) => each.id)).toEqual(['wallet'])
   })
 
+  it('архивный счёт без снимков «без снимка» не называется', () => {
+    const noWallet = row.filter((each) => each.accountId !== 'wallet')
+    const archived = [BANK, CASH, { ...WALLET, archived: true }, PLATFORM, HISTORY]
+    expect(capitalOn(data(noWallet, archived), '2026-09-01').without).toEqual([])
+  })
+
   it('нет курса — позиция вне итога и названа с числом', () => {
     const capital = capitalOn({ ...data(row), rates: [] }, '2026-09-01')
     expect(capital.savings).toBe(1200000)

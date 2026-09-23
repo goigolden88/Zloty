@@ -120,7 +120,9 @@ export function capitalOn(data: CapitalData, day: string): Capital {
     const found = latestOf(data.balances, account.id, day)
     const first = found[0]
     if (!first) {
-      without.push(account)
+      // Архивный счёт без единого снимка — не пропуск, а счёт, которого
+      // в капитале и не было: называть его незачем.
+      if (!account.archived) without.push(account)
       continue
     }
 

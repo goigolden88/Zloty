@@ -1601,6 +1601,27 @@ async function scenario(profile) {
   await act(`byText('button', 'Отмена').click();`)
   await sleep(300)
 
+  // Вторая валюта капитала: курс в основании называется так, как внесён, —
+  // «90 RUB за USD», а не перевёрнутым «0,011111 USD за RUB».
+  await act(`if (!document.body.innerText.includes('Вторая валюта капитала')) startsWith('.fold__btn', 'Настройки учёта').click();`)
+  await sleep(400)
+  await act(`
+    const second = [...document.querySelectorAll('label')].find((el) => el.textContent.includes('Вторая валюта капитала')).querySelector('select');
+    set(second, 'USD');
+    second.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`
+    const block = [...document.querySelectorAll('label')].find((el) => el.textContent.includes('Вторая валюта капитала')).closest('.form');
+    [...block.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Сохранить').click();
+  `)
+  await sleep(700)
+  await go('/capital')
+  await sleep(500)
+  const capital4 = (await screen()).replace(/ /g, ' ')
+  check('итог во второй валюте — с курсом, названным как внесён: 90 RUB за USD', has(capital4, '$ по 90 RUB за USD'), line(capital4, 'за USD'))
+  check('перевёрнутого курса на экране нет', !has(capital4, 'USD за RUB'), line(capital4, 'USD за RUB'))
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()

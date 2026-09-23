@@ -59,8 +59,11 @@ describe('в какой валюте считать итоги', () => {
     expect(baseCurrencyOf(null, [currency('RUB')])).toEqual({ code: 'RUB', from: 'only' })
   })
 
-  it('настроек нет, а валют несколько — выбор за человеком', () => {
-    expect(baseCurrencyOf(null, [currency('RUB'), currency('USD')])).toEqual({ pick: ['RUB', 'USD'] })
+  it('настроек нет, а валют несколько — первая заведённая, по порядку справочника (Р-41)', () => {
+    const usd = { ...currency('USD'), order: 0 }
+    const rub = { ...currency('RUB'), order: 1 }
+    expect(baseCurrencyOf(null, [rub, usd])).toEqual({ code: 'USD', from: 'first' })
+    expect(baseCurrencyOf(null, [{ ...rub, order: 0 }, { ...usd, order: 1 }])).toEqual({ code: 'RUB', from: 'first' })
   })
 
   it('валют нет вовсе — считать не в чем', () => {
@@ -74,7 +77,7 @@ describe('в какой валюте считать итоги', () => {
   it('валюта настроек пропала из справочника — по ней считать нельзя', () => {
     const gone = profile({ id: 'a', updatedAt: AT, baseCurrency: 'EUR' })
     expect(baseCurrencyOf(gone, [currency('RUB')])).toEqual({ code: 'RUB', from: 'only' })
-    expect(baseCurrencyOf(gone, [currency('RUB'), currency('USD')])).toEqual({ pick: ['RUB', 'USD'] })
+    expect(baseCurrencyOf(gone, [currency('RUB'), { ...currency('USD'), order: 1 }])).toEqual({ code: 'RUB', from: 'first' })
   })
 })
 

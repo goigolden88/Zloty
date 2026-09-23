@@ -76,7 +76,7 @@ export function Month() {
   const busy = ledger.status === 'loading' || entries.status === 'loading' || rates.status === 'loading'
   const profile = readProfile(ledger.data.profile)
 
-  // Валюта итогов: из настроек, а если их нет — единственная заведённая.
+  // Валюта итогов: из настроек, а если их нет — первая заведённая (Р-41).
   // Приложение доходит до записей и без настроек: валюта, счёт и операции
   // приезжают одним файлом импорта. Упереться после этого в пустой экран
   // значило бы довести человека до данных и не ответить на вопрос.
@@ -121,6 +121,12 @@ export function Month() {
             <p className="basis">
               Итоги считаются в {currency.code} — это единственная заведённая валюта. Станет больше —
               основную выбирают в <Link to="/books">настройках учёта</Link>.
+            </p>
+          )}
+          {currency.from === 'first' && (
+            <p className="basis">
+              Итоги считаются в {currency.code} — это первая заведённая валюта. Сменить — в{' '}
+              <Link to="/books">настройках учёта</Link>.
             </p>
           )}
           <Report
