@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Rate } from '../../app/model.ts'
-import { convert, findRate, RATE_MAX_AGE_DAYS } from './rates.ts'
+import { convert, findPath, findRate, RATE_MAX_AGE_DAYS } from './rates.ts'
 
 function rate(date: string, from: string, to: string, value: number): Rate {
   return {
@@ -80,7 +80,7 @@ describe('пересчёт', () => {
     const result = convert({ amount: 18000, currency: 'USD' }, 'RUB', 2, 2, rates, '2026-09-01')
     expect(result).toEqual({
       money: { amount: 1620000, currency: 'RUB' },
-      basis: { rate: 90, date: '2026-09-01', exact: true, inverted: false },
+      legs: [{ rate: 90, date: '2026-09-01', exact: true, inverted: false, from: 'USD', to: 'RUB' }],
     })
   })
 
@@ -90,7 +90,7 @@ describe('пересчёт', () => {
     const result = convert({ amount: 100000, currency: 'BTC' }, 'RUB', 2, 8, btcRates, '2026-09-01')
     expect(result).toEqual({
       money: { amount: 500000, currency: 'RUB' },
-      basis: { rate: 5000000, date: '2026-09-01', exact: true, inverted: false },
+      legs: [{ rate: 5000000, date: '2026-09-01', exact: true, inverted: false, from: 'BTC', to: 'RUB' }],
     })
   })
 
@@ -101,6 +101,86 @@ describe('пересчёт', () => {
 
   it('курс на более раннюю дату виден в основании: exact = false', () => {
     const result = convert({ amount: 10000, currency: 'USD' }, 'RUB', 2, 2, rates, '2026-09-05')
-    expect(result).toMatchObject({ basis: { date: '2026-09-01', exact: false } })
+    expect(result).toMatchObject({ legs: [{ date: '2026-09-01', exact: false }] })
+  })
+})
+
+describe('через промежуточную валюту (Р-37)', () => {
+  // Как у человека: биткойн и евро — к доллару, доллар — к рублю.
+  const paired: Rate[] = [
+    rate('2026-09-01', 'USD', 'RUB', 90),
+    rate('2026-09-01', 'BTC', 'USD', 60000),
+    rate('2026-09-01', 'EUR', 'USD', 1.2),
+  ]
+
+  it('прямого курса нет — путь через доллар, и оба плеча названы', () => {
+    const path = findPath(paired, 'BTC', 'RUB', '2026-09-01')
+    expect(path?.rate).toBe(5400000)
+    expect(path?.legs.map((leg) => [leg.from, leg.to, leg.rate])).toEqual([
+      ['BTC', 'USD', 60000],
+      ['USD', 'RUB', 90],
+    ])
+  })
+
+  it('плечо в обратную сторону тоже годится', () => {
+    // RUB → EUR: рубль в доллар — перевёрнутый курс, доллар в евро — перевёрнутый.
+    const path = findPath(paired, 'RUB', 'EUR', '2026-09-01')
+    expect(path?.rate).toBeCloseTo(1 / 108, 12)
+    expect(path?.legs.every((leg) => leg.inverted)).toBe(true)
+  })
+
+  it('прямой курс главнее пути, даже если он старше', () => {
+    const withDirect = [...paired, rate('2026-08-20', 'BTC', 'RUB', 5000000)]
+    const path = findPath(withDirect, 'BTC', 'RUB', '2026-09-01')
+    expect(path?.legs).toHaveLength(1)
+    expect(path?.rate).toBe(5000000)
+  })
+
+  it('каждое плечо стареет само: старше срока — пути нет', () => {
+    const stale = [rate('2026-07-01', 'USD', 'RUB', 80), rate('2026-09-01', 'BTC', 'USD', 60000)]
+    expect(findPath(stale, 'BTC', 'RUB', '2026-09-01')).toBeNull()
+  })
+
+  it('из нескольких путей — тот, у которого старший курс свежее', () => {
+    const two = [
+      rate('2026-09-01', 'BTC', 'USD', 60000),
+      rate('2026-08-10', 'USD', 'RUB', 80),
+      rate('2026-09-01', 'BTC', 'USDT', 61000),
+      rate('2026-08-25', 'USDT', 'RUB', 85),
+    ]
+    const path = findPath(two, 'BTC', 'RUB', '2026-09-01')
+    expect(path?.legs[0]?.to).toBe('USDT')
+  })
+
+  it('равные по свежести пути — по коду валюты, одинаково на всех устройствах', () => {
+    const two = [
+      rate('2026-09-01', 'BTC', 'USDT', 61000),
+      rate('2026-09-01', 'USDT', 'RUB', 85),
+      rate('2026-09-01', 'BTC', 'USD', 60000),
+      rate('2026-09-01', 'USD', 'RUB', 80),
+    ]
+    expect(findPath(two, 'BTC', 'RUB', '2026-09-01')?.legs[0]?.to).toBe('USD')
+    expect(findPath([...two].reverse(), 'BTC', 'RUB', '2026-09-01')?.legs[0]?.to).toBe('USD')
+  })
+
+  it('промежуточная валюта одна: цепочку в три плеча не строит', () => {
+    const chain = [
+      rate('2026-09-01', 'BTC', 'USDT', 61000),
+      rate('2026-09-01', 'USDT', 'USD', 1),
+      rate('2026-09-01', 'USD', 'RUB', 90),
+    ]
+    expect(findPath(chain, 'BTC', 'RUB', '2026-09-01')).toBeNull()
+  })
+
+  it('удалённый курс не участвует ни прямо, ни в пути', () => {
+    const gone = paired.map((each) => (each.from === 'USD' ? { ...each, deleted: true } : each))
+    expect(findPath(gone, 'BTC', 'RUB', '2026-09-01')).toBeNull()
+    expect(findRate(gone, 'USD', 'RUB', '2026-09-01')).toBeNull()
+  })
+
+  it('пересчёт через путь: 0,01 BTC по 60 000 $ и 90 ₽ = 54 000 ₽', () => {
+    const result = convert({ amount: 1000000, currency: 'BTC' }, 'RUB', 2, 8, paired, '2026-09-01')
+    expect(result).toMatchObject({ money: { amount: 5400000, currency: 'RUB' } })
+    expect('legs' in result && result.legs).toHaveLength(2)
   })
 })

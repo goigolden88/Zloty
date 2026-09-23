@@ -167,6 +167,17 @@ describe('позиция без курса называется, а не про�
     expect(report.expense.missing).toHaveLength(0)
   })
 
+  it('прямого курса нет — через промежуточную валюту (Р-37)', () => {
+    // Курс USD→EUR и EUR→RUB: доллар в рубли через евро.
+    const legs: Rate[] = [
+      { id: 'r1', updatedAt: AT, date: '2026-09-11', from: 'USD', to: 'EUR', rate: 0.5, source: 'manual' },
+      { id: 'r2', updatedAt: AT, date: '2026-09-11', from: 'EUR', to: 'RUB', rate: 160, source: 'manual' },
+    ]
+    const report = monthReport(data(mixed, legs), '2026-09')
+    expect(report.expense.amount).toBe(500000)
+    expect(report.expense.missing).toHaveLength(0)
+  })
+
   it('одинаковой нехватки не набирается список из ста строк', () => {
     const many = [
       { ...entry({ kind: 'expense', amount: 1, date: '2026-09-11' }), money: { amount: 1, currency: 'USD' } },

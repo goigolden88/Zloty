@@ -49,7 +49,8 @@ export function findRate(
 
   let best: FoundRate | null = null
   for (const record of rates) {
-    if (record.date > onDate) continue
+    // Слепок базы для импорта несёт и надгробия.
+    if (record.deleted || record.date > onDate) continue
 
     const straight = record.from === from && record.to === to
     const inverted = record.from === to && record.to === from
@@ -70,9 +71,78 @@ export function findRate(
   return best
 }
 
+/** Одно плечо пересчёта: какой курс, между чем и чем. */
+export type RateLeg = FoundRate & { from: CurrencyCode; to: CurrencyCode }
+
+/** Путь пересчёта: прямой курс — одно плечо, через промежуточную валюту — два. */
+export type RatePath = {
+  /** Итоговый множитель: сколько «to» за одну «from». */
+  rate: number
+  legs: readonly RateLeg[]
+}
+
+/**
+ * Курс `from` → `to` на дату — прямой, а нет его — через одну промежуточную
+ * валюту (Р-37).
+ *
+ * Цена BTC и курс евро живут парой к доллару, капитал считается в рублях:
+ * без промежуточной валюты биткойн выпал бы из итога, хотя обе половины
+ * пути известны. Правила:
+ * — **прямой главнее**, даже если старше: его внёс человек, и он отвечает
+ *   ровно на вопрос;
+ * — каждое плечо — по правилам `findRate`: на дату или ближайший ранний
+ *   не старше срока, в любую сторону;
+ * — подходят несколько валют — берётся та, у которой старший из двух курсов
+ *   свежее; равны — по коду, чтобы ответ был одинаковым на всех устройствах;
+ * — промежуточная валюта одна: основание по длинной цепочке не прочитать.
+ */
+export function findPath(
+  rates: readonly Rate[],
+  from: CurrencyCode,
+  to: CurrencyCode,
+  onDate: string,
+  maxAgeDays: number = RATE_MAX_AGE_DAYS,
+): RatePath | null {
+  const direct = findRate(rates, from, to, onDate, maxAgeDays)
+  if (direct) return { rate: direct.rate, legs: [{ ...direct, from, to }] }
+
+  const middles = new Set<CurrencyCode>()
+  for (const record of rates) {
+    if (record.deleted) continue
+    middles.add(record.from)
+    middles.add(record.to)
+  }
+  middles.delete(from)
+  middles.delete(to)
+
+  let best: { path: RatePath; oldest: string; via: CurrencyCode } | null = null
+  for (const via of [...middles].sort()) {
+    const first = findRate(rates, from, via, onDate, maxAgeDays)
+    if (!first) continue
+    const second = findRate(rates, via, to, onDate, maxAgeDays)
+    if (!second) continue
+
+    const oldest = first.date < second.date ? first.date : second.date
+    // Коды перебираются по порядку, поэтому при равенстве остаётся первый.
+    if (best && best.oldest >= oldest) continue
+    best = {
+      path: {
+        rate: first.rate * second.rate,
+        legs: [
+          { ...first, from, to: via },
+          { ...second, from: via, to },
+        ],
+      },
+      oldest,
+      via,
+    }
+  }
+  return best?.path ?? null
+}
+
 /** Пересчёт удался — или не удался, и тогда известно, какого курса не хватило. */
 export type Converted =
-  | { money: Money; basis: FoundRate }
+  | { money: Money; legs: readonly RateLeg[] }
   | { missing: { from: CurrencyCode; to: CurrencyCode; date: string } }
 
 /**
@@ -90,10 +160,10 @@ export function convert(
   onDate: string,
   maxAgeDays: number = RATE_MAX_AGE_DAYS,
 ): Converted {
-  const found = findRate(rates, money.currency, to, onDate, maxAgeDays)
+  const found = findPath(rates, money.currency, to, onDate, maxAgeDays)
   if (!found) return { missing: { from: money.currency, to, date: onDate } }
 
   const major = money.amount / 10 ** fromDecimals
   const amount = Math.round(major * found.rate * 10 ** toDecimals)
-  return { money: { amount, currency: to }, basis: found }
+  return { money: { amount, currency: to }, legs: found.legs }
 }
