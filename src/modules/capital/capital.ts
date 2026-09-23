@@ -136,6 +136,10 @@ export function capitalOn(data: CapitalData, day: string): Capital {
       if (each.amount < 0) deferred += -each.amount
       else held += each.amount
     }
+    // Ноль и архив — счёт закрыт (Р-44): с даты нуля в капитал он не входит,
+    // иначе висел бы строкой «0» на каждой следующей дате. Раньше нуля —
+    // считается как был. Живой счёт с нулём остаётся: он пуст, но действует.
+    if (account.archived && held === 0 && deferred === 0) continue
 
     const heldBase = toBase(held, account.currency)
     const deferredBase = toBase(deferred, account.currency)

@@ -103,6 +103,28 @@ describe('капитал на дату (Р-39)', () => {
     expect(capitalOn(data(noWallet, archived), '2026-09-01').without).toEqual([])
   })
 
+  it('закрытый счёт — ноль и архив — с даты нуля в капитал не входит, а раньше считается (Р-44)', () => {
+    const closed = [...row, balance('cash', '2026-09-20', 0), balance('bank', '2026-09-20', 1500000)]
+    const accounts = [BANK, { ...CASH, archived: true }, WALLET, PLATFORM, HISTORY]
+    const after = capitalOn(data(closed, accounts), '2026-09-20')
+    expect(after.holdings.map((each) => each.account.id)).not.toContain('cash')
+    expect(after.without).toEqual([])
+    const before = capitalOn(data(closed, accounts), '2026-09-01')
+    expect(before.holdings.find((each) => each.account.id === 'cash')?.held).toBe(10000)
+  })
+
+  it('живой счёт с нулём остаётся строкой: пуст, но действует', () => {
+    const empty = [...row, balance('cash', '2026-09-20', 0)]
+    const after = capitalOn(data(empty), '2026-09-20')
+    expect(after.holdings.find((each) => each.account.id === 'cash')?.held).toBe(0)
+  })
+
+  it('архив без нуля деньги не закрывает: последний снимок в капитале', () => {
+    const accounts = [BANK, { ...CASH, archived: true }, WALLET, PLATFORM, HISTORY]
+    const after = capitalOn(data(row, accounts), '2026-09-20')
+    expect(after.holdings.find((each) => each.account.id === 'cash')?.held).toBe(10000)
+  })
+
   it('нет курса — позиция вне итога и названа с числом', () => {
     const capital = capitalOn({ ...data(row), rates: [] }, '2026-09-01')
     expect(capital.savings).toBe(1200000)
