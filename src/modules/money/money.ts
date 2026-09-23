@@ -130,7 +130,32 @@ export function formatMoney(money: Money, currency: Currency | null): string {
   }
 }
 
-/** Сколько знаков показывать в единице показа: mBTC из сатоши — 5 знаков. */
+/**
+ * Сумма, которую человек вписал в поле, — в единице показа валюты, если она
+ * есть: биткойн вносится в mBTC, как в таблице, а хранится в сатоши (Р-04).
+ * Точность — полная: «21,63» mBTC — ровно 2 163 000 сатоши. Знака нет.
+ */
+export function parseShown(value: string, currency: Currency): Parsed | null {
+  if (!currency.unit) return parseAmount(value, currency.decimals)
+  const digits = Math.round(Math.log10(currency.unit.factor))
+  // Множитель — степень десяти: тогда разбор с его числом знаков сразу даёт
+  // минимальные единицы, без умножения дробей.
+  if (digits >= 0 && 10 ** digits === currency.unit.factor) return parseAmount(value, digits)
+  const parsed = parseAmount(value, MAX_DECIMALS)
+  if (!parsed) return null
+  const amount = Math.round((parsed.amount / 10 ** MAX_DECIMALS) * currency.unit.factor)
+  return Number.isSafeInteger(amount) ? { amount, rounded: parsed.rounded } : null
+}
+
+/** Сумма для поля ввода — в единице показа, без группировки и без лишних нулей: «21,63». */
+export function shownValue(amount: number, currency: Currency): string {
+  const factor = currency.unit ? currency.unit.factor : 10 ** currency.decimals
+  const digits = Math.max(0, Math.ceil(Math.log10(factor)))
+  const text = (amount / factor).toFixed(Math.min(digits, 20))
+  return (text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text).replace('.', ',')
+}
+
+/** Сколько знаков показывать в единице показа: mBTC из сатоши — 3 знака, как закреплено тестом. */
 function unitDecimals(currency: Currency): number {
   if (!currency.unit) return currency.decimals
   const shift = Math.round(Math.log10(currency.unit.factor))

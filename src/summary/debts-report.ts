@@ -50,6 +50,14 @@ function upTo(debts: DebtsData, day: string): DebtsData {
   }
 }
 
+/**
+ * Кто кому должен на день включительно — в валютах долгов, без пересчёта.
+ * Одно место для отчёта месяца и капитала: второй раз долги не считаются.
+ */
+export function debtsOn(debts: DebtsData, day: string): { owedToMe: Money[]; owedByMe: Money[] } {
+  return debtTotals(upTo(debts, day))
+}
+
 /** Числа долгов для отчёта месяца. Долгов нет — всё по нулям. */
 export function debtsForReport(input: {
   /** ГГГГ-ММ */
@@ -93,7 +101,7 @@ export function debtsForReport(input: {
     counted += 1
   }
 
-  const totals = debtTotals(upTo(debts, end))
+  const totals = debtsOn(debts, end)
   const sum = (list: readonly Money[]) => list.reduce((all, money) => all + toBase(money, end), 0)
 
   return {

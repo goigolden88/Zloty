@@ -6,6 +6,8 @@ import {
   formatMoney,
   MAX_DECIMALS,
   parseAmount,
+  parseShown,
+  shownValue,
   suggestDecimals,
   sumMoney,
   toMajor,
@@ -133,5 +135,35 @@ describe('сложение', () => {
   it('чужая валюта не складывается молча — она названа', () => {
     const result = sumMoney([money(100), money(50, 'USD'), money(20, 'EUR')], 'RUB')
     expect(result).toEqual({ mixed: ['USD', 'EUR'] })
+  })
+})
+
+describe('сумма в поле ввода — в единице показа', () => {
+  it('mBTC разбирается в сатоши без потери знаков', () => {
+    expect(parseShown('21,63', btc)).toEqual({ amount: 2163000, rounded: false })
+    expect(parseShown('0,00001', btc)).toEqual({ amount: 1, rounded: false })
+  })
+
+  it('без единицы показа — обычные единицы валюты', () => {
+    expect(parseShown('1 234,56', rub)).toEqual({ amount: 123456, rounded: false })
+  })
+
+  it('знак и не число — отказ', () => {
+    expect(parseShown('-5', rub)).toBeNull()
+    expect(parseShown('пять', btc)).toBeNull()
+  })
+
+  it('обратно в поле — без группировки и лишних нулей', () => {
+    expect(shownValue(2163000, btc)).toBe('21,63')
+    expect(shownValue(123450, rub)).toBe('1234,5')
+    expect(shownValue(500000, rub)).toBe('5000')
+    expect(shownValue(1, usdt)).toBe('0,0001')
+  })
+
+  it('туда и обратно — то же самое', () => {
+    for (const amount of [0, 1, 99, 2163000, 123456789]) {
+      expect(parseShown(shownValue(amount, btc), btc)?.amount).toBe(amount)
+      expect(parseShown(shownValue(amount, rub), rub)?.amount).toBe(amount)
+    }
   })
 })
