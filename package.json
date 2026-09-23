@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "history": "node scripts/check-history.mjs",
+    "capital": "node scripts/check-capital.mjs",
     "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
