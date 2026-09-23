@@ -164,7 +164,7 @@ export type SpendDraft = {
   date: string
   payerId: string
   amount: number
-  split: { personId: string; share?: number }[]
+  split: { personId: string; share?: number; weight?: number }[]
 }
 
 export function createSpend(eventId: string, draft: SpendDraft): RoomSpend {

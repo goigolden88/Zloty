@@ -15,11 +15,11 @@ import {
   type EventDraft,
   type SpendDraft,
 } from '../modules/debts/records.ts'
-import { sharesOf, spendProblem } from '../modules/debts/split.ts'
+import { sharesOf, spendProblem, splitMode, type SplitMode } from '../modules/debts/split.ts'
 import { roomText } from '../modules/debts/text.ts'
 import { useDebts } from '../modules/debts/useDebts.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
-import { findCurrency, formatMoney, parseAmount } from '../modules/money/money.ts'
+import { findCurrency, formatMoney, parseAmount, toMajor } from '../modules/money/money.ts'
 import { formatDate, plural, today } from '../shared/core/dates.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
 import { roomById } from './Debts.tsx'
@@ -349,7 +349,6 @@ function SpendLine({
   onEdit: (spend: RoomSpend) => void
 }) {
   const shares = sharesOf(spend)
-  const even = spend.split.every((part) => part.share === undefined)
   const missing = event.personIds.length - spend.split.length
 
   return (
@@ -358,7 +357,7 @@ function SpendLine({
         {spend.title}
         <span className="muted">
           {' · '}заплатил {nameOf(people, spend.payerId)} ·{' '}
-          {even ? 'поровну' : 'суммами'} · {spend.split.length}{' '}
+          {MODE_WORD[splitMode(spend)]} · {spend.split.length}{' '}
           {plural(spend.split.length, ['человек', 'человека', 'человек'])}
         </span>
         {missing > 0 && (
@@ -454,6 +453,35 @@ function EventForm({
   )
 }
 
+/** Способ деления словом — в строке траты и в выборе формы. */
+const MODE_WORD: Record<SplitMode, string> = {
+  equal: 'поровну',
+  amounts: 'суммами',
+  weights: 'весами',
+}
+
+/** Что значит поле у человека при каждом способе и что в нём, если пусто. */
+const MODE_HINT: Record<SplitMode, string> = {
+  equal: 'Все отмеченные платят поровну. Остаток от деления достаётся тому, кто платил.',
+  amounts:
+    'Вписанная сумма — его личный расход: «взял на эту сумму». Пустое поле — поровну с остальными пустыми. ' +
+    'Остаток от деления достаётся тому, кто платил.',
+  weights:
+    'Вес — сколько порций: «Боре две, Вере одна». Можно дробный — полторы. Пустое поле — одна порция, ноль — ' +
+    'ничего не должен. Остаток от деления достаётся тому, кто платил.',
+}
+
+/** Вес из строки: «2», «1,5». Отрицательный и нечисловой — отказ. */
+function parseWeight(value: string): number | null {
+  const number = Number(value.trim().replace(',', '.'))
+  return Number.isFinite(number) && number >= 0 ? number : null
+}
+
+/** Число для поля ввода: 1234.5 → «1234,5». */
+function field(value: number): string {
+  return String(value).replace('.', ',')
+}
+
 function SpendForm({
   event,
   people,
@@ -469,36 +497,64 @@ function SpendForm({
   onSave: (draft: SpendDraft) => Promise<void>
   onCancel: () => void
 }) {
+  const decimals = currency?.decimals ?? 0
   const [title, setTitle] = useState(record?.title ?? '')
   const [date, setDate] = useState(record?.date ?? event.date)
   const [payerId, setPayerId] = useState(record?.payerId ?? event.personIds[0] ?? '')
-  const [amount, setAmount] = useState('')
+  // Правка открывается с записанным, а не с пустыми полями: иначе сумму
+  // пришлось бы вспоминать и вводить заново ради одной опечатки в названии.
+  const [amount, setAmount] = useState(record ? field(toMajor(record.amount, decimals)) : '')
+  const [mode, setMode] = useState<SplitMode>(record ? splitMode(record) : 'equal')
   const [chosen, setChosen] = useState<string[]>(
     record ? record.split.map((part) => part.personId) : [...event.personIds],
   )
-  const [exact, setExact] = useState<Record<string, string>>({})
+  const [typed, setTyped] = useState<Record<string, string>>(() => {
+    const out: Record<string, string> = {}
+    for (const part of record?.split ?? []) {
+      if (part.share !== undefined) out[part.personId] = field(toMajor(part.share, decimals))
+      else if (part.weight !== undefined && part.weight !== 1) out[part.personId] = field(part.weight)
+    }
+    return out
+  })
   const [error, setError] = useState('')
+
+  // Люди, которых трата делит, но в событии их уже нет, — не теряются при правке.
+  const listed = [...event.personIds, ...chosen.filter((id) => !event.personIds.includes(id))]
 
   function toggle(id: string) {
     setChosen((was) => (was.includes(id) ? was.filter((each) => each !== id) : [...was, id]))
   }
 
+  function switchMode(next: SplitMode) {
+    // Число в поле значит разное при разных способах: 700 рублей — не 700 порций.
+    setMode(next)
+    setTyped({})
+    setError('')
+  }
+
   function submit() {
     if (!currency) return setError('у комнаты валюта, которой нет в справочнике')
+    if (title.trim() === '') return setError('не сказано, за что платили')
     const parsed = parseAmount(amount, currency.decimals)
-    if (!parsed) return setError('сумма — положительное число')
+    if (!parsed || parsed.amount === 0) return setError('сумма — положительное число')
     if (chosen.length === 0) return setError('не выбрано, на кого делится')
 
     const split: SpendDraft['split'] = []
     for (const personId of chosen) {
-      const typed = exact[personId]
-      if (typed === undefined || typed.trim() === '') {
+      const text = (typed[personId] ?? '').trim()
+      if (mode === 'equal' || text === '') {
         split.push({ personId })
         continue
       }
-      const share = parseAmount(typed, currency.decimals)
-      if (!share) return setError(`доля «${nameOf(people, personId)}» — число или пусто`)
-      split.push({ personId, share: share.amount })
+      if (mode === 'amounts') {
+        const share = parseAmount(text, currency.decimals)
+        if (!share) return setError(`сумма у «${nameOf(people, personId)}» — число в ${currency.code} или пусто`)
+        split.push({ personId, share: share.amount })
+        continue
+      }
+      const weight = parseWeight(text)
+      if (weight === null) return setError(`вес у «${nameOf(people, personId)}» — число порций или пусто`)
+      split.push(weight === 1 ? { personId } : { personId, weight })
     }
 
     const draft: SpendDraft = { title, date, payerId, amount: parsed.amount, split }
@@ -529,7 +585,7 @@ function SpendForm({
       <label className="field">
         Кто заплатил
         <select value={payerId} onChange={(input) => setPayerId(input.target.value)}>
-          {event.personIds.map((id) => (
+          {listed.map((id) => (
             <option key={id} value={id}>
               {nameOf(people, id)}
             </option>
@@ -542,29 +598,36 @@ function SpendForm({
         <input type="date" value={date} onChange={(input) => setDate(input.target.value)} />
       </label>
 
+      <label className="field">
+        Как делить
+        <select value={mode} onChange={(input) => switchMode(input.target.value as SplitMode)}>
+          <option value="equal">Поровну</option>
+          <option value="amounts">Суммами — кто на сколько взял</option>
+          <option value="weights">Весами — кому сколько порций</option>
+        </select>
+      </label>
+
       <fieldset className="field">
         <legend>На кого делится</legend>
-        {event.personIds.map((id) => (
+        {listed.map((id) => (
           <div key={id} className="row row--wrap">
             <label className="check">
               <input type="checkbox" checked={chosen.includes(id)} onChange={() => toggle(id)} />
               {nameOf(people, id)}
             </label>
-            {chosen.includes(id) && (
+            {mode !== 'equal' && chosen.includes(id) && (
               <input
-                value={exact[id] ?? ''}
-                onChange={(input) => setExact((was) => ({ ...was, [id]: input.target.value }))}
-                placeholder="поровну"
+                value={typed[id] ?? ''}
+                onChange={(input) => setTyped((was) => ({ ...was, [id]: input.target.value }))}
+                placeholder={mode === 'amounts' ? 'поровну' : 'одна порция'}
                 inputMode="decimal"
+                aria-label={mode === 'amounts' ? `сумма у ${nameOf(people, id)}` : `вес у ${nameOf(people, id)}`}
               />
             )}
           </div>
         ))}
       </fieldset>
-      <p className="muted">
-        Пустое поле — поровну с остальными пустыми. Вписанная сумма — его личный расход: «взял на эту сумму».
-        Остаток от деления достаётся тому, кто платил.
-      </p>
+      <p className="muted">{MODE_HINT[mode]}</p>
 
       {error && <p className="error">{error}</p>}
 

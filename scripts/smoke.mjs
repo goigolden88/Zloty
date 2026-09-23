@@ -1389,6 +1389,52 @@ async function scenario(profile) {
     line(transfers, 'Боря → Аня'),
   )
 
+  // ── Доля весом (Р-33): «Ане две порции, Боре одна».
+  await go('/debts')
+  await sleep(400)
+  await act(`byText('a', 'Лето').click();`)
+  await sleep(800)
+  await act(`byText('button', 'Добавить трату').click();`)
+  await sleep(400)
+  await act(`
+    const fields = [...document.querySelectorAll('.form input')];
+    set(fields[0], 'Пицца');
+    set(fields.find((el) => el.inputMode === 'decimal'), '900');
+    const how = [...document.querySelectorAll('.form select')].find((each) =>
+      [...each.options].some((option) => option.value === 'weights'));
+    set(how, 'weights');
+    how.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(400)
+  await act(`set(document.querySelector('input[aria-label="вес у Аня"]'), '2');`)
+  await sleep(300)
+  await act(`byText('button', 'Добавить').click();`)
+  await sleep(900)
+  const weighted = await screen()
+  check('трата весами подписана словом «весами»', has(weighted, 'весами'), line(weighted, 'весами'))
+  check(
+    'доли по весам два к одному: 600 и 300',
+    /Аня 600,00/.test(weighted.replace(/ /g, ' ')) && /Боря 300,00/.test(weighted.replace(/ /g, ' ')),
+    line(weighted, 'Боря 300'),
+  )
+
+  // Правка открывается с записанным, а не с пустой суммой.
+  await act(`
+    const row = [...document.querySelectorAll('li.line')].find((el) => el.textContent.includes('Пицца'));
+    [...row.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Изменить').click();
+  `)
+  await sleep(500)
+  const opened = await run(`
+    (() => {
+      const amount = [...document.querySelectorAll('.form input')].find((el) => el.inputMode === 'decimal');
+      const weight = document.querySelector('input[aria-label="вес у Аня"]');
+      return (amount ? amount.value : '') + '|' + (weight ? weight.value : '');
+    })()
+  `)
+  check('правка траты открывается с суммой и весом, а не с пустыми полями', opened === '900|2', String(opened))
+  await act(`byText('button', 'Отмена').click();`)
+  await sleep(400)
+
   // ── Связь операции с тратой (Р-31): в расход входит доля, а не сумма.
   await go('/entries')
   await sleep(400)

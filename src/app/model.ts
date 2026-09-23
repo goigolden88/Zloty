@@ -240,8 +240,12 @@ export type RoomSpend = Base & {
   payerId: string
   /** Целое в валюте комнаты. */
   amount: number
-  /** Нет `share` — поровну между перечисленными; остаток от деления — плательщику. */
-  split: { personId: string; share?: number }[]
+  /**
+   * Доля суммой (`share`) или весом (`weight`), не тем и другим сразу (Р-33).
+   * Нет ни того ни другого — вес один, то есть поровну. Остаток от деления —
+   * плательщику (Р-32).
+   */
+  split: { personId: string; share?: number; weight?: number }[]
 }
 
 /**

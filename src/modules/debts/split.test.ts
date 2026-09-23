@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RoomSpend } from '../../app/model.ts'
-import { shareOf, sharesOf, spendProblem } from './split.ts'
+import { shareOf, sharesOf, spendProblem, splitMode } from './split.ts'
 
 /** Люди выдуманные: код публичный (CLAUDE.md). */
 const ANYA = 'person-anya'
@@ -152,5 +152,127 @@ describe('кривая трата называется, а не проглаты
     })
     expect(spendProblem(broken)).not.toBeNull()
     expect(sum(sharesOf(broken))).toBe(100000)
+  })
+})
+
+describe('доля весом — «Боре две порции, Вере одна» (Р-33)', () => {
+  it('3 000 ₽ весами 2 : 1 : 1 — 1 500, 750 и 750', () => {
+    const shares = sharesOf(
+      spend({
+        split: [{ personId: ANYA }, { personId: BORYA, weight: 2 }, { personId: VERA }],
+        payerId: VERA,
+      }),
+    )
+    expect(shares.get(BORYA)).toBe(150000)
+    expect(shares.get(ANYA)).toBe(75000)
+    expect(shares.get(VERA)).toBe(75000)
+  })
+
+  it('вес может быть дробным: полторы порции против одной', () => {
+    const shares = sharesOf(
+      spend({ amount: 250000, split: [{ personId: ANYA, weight: 1.5 }, { personId: BORYA, weight: 1 }] }),
+    )
+    expect(shares.get(ANYA)).toBe(150000)
+    expect(shares.get(BORYA)).toBe(100000)
+  })
+
+  it('на неделящейся сумме доли всё равно целые, и копейка — плательщику', () => {
+    const shares = sharesOf(
+      spend({
+        amount: 100000,
+        payerId: BORYA,
+        split: [{ personId: ANYA, weight: 1 }, { personId: BORYA, weight: 1 }, { personId: VERA, weight: 1 }],
+      }),
+    )
+    expect(shares.get(BORYA)).toBe(33334)
+    expect(sum(shares)).toBe(100000)
+    expect([...shares.values()].every(Number.isInteger)).toBe(true)
+  })
+
+  it('вес ноль — человек в трате, но ничего не должен', () => {
+    const shares = sharesOf(spend({ split: [{ personId: ANYA }, { personId: BORYA, weight: 0 }] }))
+    expect(shares.get(BORYA)).toBe(0)
+    expect(shares.get(ANYA)).toBe(300000)
+  })
+
+  it('сумма и вес вместе: «взял на 700», остальное — по весам', () => {
+    const shares = sharesOf(
+      spend({
+        amount: 370000,
+        split: [
+          { personId: ANYA, share: 70000 },
+          { personId: BORYA, weight: 2 },
+          { personId: VERA, weight: 1 },
+        ],
+      }),
+    )
+    expect(shares.get(ANYA)).toBe(70000)
+    expect(shares.get(BORYA)).toBe(200000)
+    expect(shares.get(VERA)).toBe(100000)
+  })
+
+  it('старая трата без весов считается ровно как раньше — поровну', () => {
+    const before = sharesOf(spend({ amount: 100000 }))
+    const withOnes = sharesOf(
+      spend({
+        amount: 100000,
+        split: [{ personId: ANYA, weight: 1 }, { personId: BORYA, weight: 1 }, { personId: VERA, weight: 1 }],
+      }),
+    )
+    expect([...withOnes]).toEqual([...before])
+  })
+
+  it('сумма долей равна сумме траты на любых весах', () => {
+    for (const amount of [1, 7, 99, 100001, 999999]) {
+      for (const weights of [[1, 2], [0.5, 1.5, 3], [3, 3, 1, 7]]) {
+        const split = weights.map((weight, index) => ({ personId: `p${index}`, weight }))
+        expect(sum(sharesOf(spend({ amount, split, payerId: 'p0' })))).toBe(amount)
+      }
+    }
+  })
+})
+
+describe('кривые веса называются', () => {
+  it('у одного человека и сумма, и вес — нужно что-то одно', () => {
+    expect(spendProblem(spend({ split: [{ personId: ANYA, share: 100, weight: 2 }, { personId: BORYA }] }))).toBe(
+      'У одного человека и сумма, и вес — нужно что-то одно',
+    )
+  })
+
+  it('отрицательный вес', () => {
+    expect(spendProblem(spend({ split: [{ personId: ANYA, weight: -1 }, { personId: BORYA }] }))).toBe(
+      'Вес должен быть числом не меньше нуля',
+    )
+  })
+
+  it('все веса нулевые — остаток делить не на кого', () => {
+    expect(
+      spendProblem(spend({ split: [{ personId: ANYA, weight: 0 }, { personId: BORYA, weight: 0 }] })),
+    ).toBe('Все веса нулевые — остаток делить не на кого')
+  })
+
+  it('на нулевых весах сумма долей всё равно сходится — расход не теряется', () => {
+    const broken = spend({ split: [{ personId: ANYA, weight: 0 }, { personId: BORYA, weight: 0 }] })
+    expect(sum(sharesOf(broken))).toBe(300000)
+  })
+})
+
+describe('способ деления для подписи на экране', () => {
+  it('без сумм и весов — поровну', () => {
+    expect(splitMode(spend())).toBe('equal')
+  })
+
+  it('веса, все по одному, — тоже поровну', () => {
+    expect(splitMode(spend({ split: [{ personId: ANYA, weight: 1 }, { personId: BORYA, weight: 1 }] }))).toBe('equal')
+  })
+
+  it('хоть один вес не единица — весами', () => {
+    expect(splitMode(spend({ split: [{ personId: ANYA, weight: 2 }, { personId: BORYA }] }))).toBe('weights')
+  })
+
+  it('хоть одна сумма — суммами', () => {
+    expect(splitMode(spend({ split: [{ personId: ANYA, share: 100 }, { personId: BORYA, weight: 2 }] }))).toBe(
+      'amounts',
+    )
   })
 })

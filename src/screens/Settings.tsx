@@ -463,7 +463,7 @@ function About({ state }: { state: State }) {
           {state.rows.map((row) => (
             <li key={row.store}>
               {LABELS[row.store]}: {row.live}
-              {row.total > row.live && <span className="muted"> (и {row.total - row.live} удалённых)</span>}
+              {row.total > row.live && <span className="muted"> (и ещё удалённых: {row.total - row.live})</span>}
             </li>
           ))}
         </ul>
