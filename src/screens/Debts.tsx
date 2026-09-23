@@ -24,7 +24,7 @@ import { useDebts } from '../modules/debts/useDebts.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
 import { findCurrency, formatMoney, parseAmount } from '../modules/money/money.ts'
-import { today } from '../shared/core/dates.ts'
+import { formatDateLoose, today } from '../shared/core/dates.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
 
 /**
@@ -90,8 +90,20 @@ function SelfNote({ people }: { people: readonly Person[] }) {
 }
 
 function moneyList(list: readonly Money[], currencies: readonly Currency[]): string {
-  if (list.length === 0) return 'ничего'
   return list.map((money) => formatMoney(money, findCurrency(currencies, money.currency))).join(' и ')
+}
+
+/**
+ * Две стороны итога — двумя фразами, а не одной с дырой.
+ *
+ * «Вам должны 100 ₽, вы должны ничего» — не по-русски, а пустая сторона
+ * пропасть не должна: её отсутствие и есть ответ.
+ */
+function totalsSentence(owedToMe: string, owedByMe: string): string {
+  if (owedToMe && owedByMe) return `Вам должны ${owedToMe}. Вы должны ${owedByMe}.`
+  if (owedToMe) return `Вам должны ${owedToMe}. Вы не должны никому.`
+  if (owedByMe) return `Вам не должен никто. Вы должны ${owedByMe}.`
+  return 'Никто никому не должен.'
 }
 
 function Summary({ data, ledger }: { data: DebtsData; ledger: LedgerData }) {
@@ -110,8 +122,9 @@ function Summary({ data, ledger }: { data: DebtsData; ledger: LedgerData }) {
     <div className="unit">
       <h2 className="unit__name">Кто кому должен</h2>
       <p>
-        Вам должны <strong>{moneyList(owedToMe, ledger.currencies)}</strong>, вы должны{' '}
-        <strong>{moneyList(owedByMe, ledger.currencies)}</strong>.
+        <strong>
+          {totalsSentence(moneyList(owedToMe, ledger.currencies), moneyList(owedByMe, ledger.currencies))}
+        </strong>
       </p>
       <p className="muted">
         Встречные долги не складываются в одно число: это разные люди и разные сроки.
@@ -246,7 +259,7 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
         {nameOf(data.people, loan.personId)}
         <span className="muted">
           {' · '}
-          {mine ? 'должен вам' : 'вы должны'} · от {loan.date}
+          {mine ? 'должен вам' : 'вы должны'} · от {formatDateLoose(loan.date)}
           {loan.note ? ` · ${loan.note}` : ''}
         </span>
         {state.repaid > 0 && (
@@ -312,6 +325,13 @@ function LoanForm({
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
 
+  const chosenCurrency = findCurrency(ledger.currencies, code)
+  const typed = chosenCurrency ? parseAmount(amount, chosenCurrency.decimals) : null
+  const written = typed
+    ? `Запишется ${formatMoney({ amount: typed.amount, currency: code }, chosenCurrency)}` +
+      (typed.rounded ? ' — округлено: больше знаков у этой валюты нет' : '')
+    : ''
+
   function submit() {
     if (!personId) return setError('не выбран человек')
     const currency = findCurrency(ledger.currencies, code)
@@ -349,9 +369,12 @@ function LoanForm({
       </label>
 
       <label className="field">
-        Сколько
+        Сколько, {code}
         <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" autoFocus />
       </label>
+      {/* Валюта в подписи, а записанная сумма — под полем: число вместе
+          с основанием. Заодно видно округление — оно молчаливое. */}
+      {written && <p className="muted">{written}</p>}
 
       {ledger.currencies.length > 1 && (
         <label className="field">

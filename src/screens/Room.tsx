@@ -522,7 +522,7 @@ function SpendForm({
       </label>
 
       <label className="field">
-        Сколько
+        Сколько, {currency?.code ?? ''}
         <input value={amount} onChange={(input) => setAmount(input.target.value)} inputMode="decimal" />
       </label>
 
@@ -672,7 +672,7 @@ function Transfers({
           </label>
 
           <label className="field">
-            Сколько
+            Сколько, {currency?.code ?? ''}
             <input value={amount} onChange={(input) => setAmount(input.target.value)} inputMode="decimal" />
           </label>
 
