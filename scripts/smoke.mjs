@@ -1389,6 +1389,55 @@ async function scenario(profile) {
     line(transfers, 'Боря → Аня'),
   )
 
+  // ── Связь операции с тратой (Р-31): в расход входит доля, а не сумма.
+  await go('/entries')
+  await sleep(400)
+  await act(`byText('button', 'Внести').click();`)
+  await sleep(500)
+  await act(`
+    const amount = document.querySelector('input[placeholder="1234,56"]');
+    set(amount, '1000');
+    const category = [...document.querySelectorAll('select')].find((each) =>
+      [...each.options].some((option) => option.textContent.trim() === 'Еда'));
+    set(category, [...category.options].find((option) => option.textContent.trim() === 'Еда').value);
+    category.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать').click();`)
+  await sleep(800)
+
+  // Деньги печатаются неразрывными пробелами, и поиск по обычному не найдёт
+  // ничего. Берётся та строка, у которой есть кнопка «Связать»: итог периода
+  // с той же суммой её не имеет.
+  await act(`
+    const flat = (el) => el.textContent.replace(/ | /g, ' ');
+    const row = [...document.querySelectorAll('li.line')].find((el) =>
+      flat(el).includes('1 000,00') &&
+      [...el.querySelectorAll('button')].some((each) => each.textContent.trim() === 'Связать'));
+    [...row.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Связать').click();
+  `)
+  await sleep(600)
+  const picker = await screen()
+  check('выбор связи предлагает траты комнат', has(picker, 'Мячи'), line(picker, 'Мячи'))
+
+  await act(`
+    const pick = [...document.querySelectorAll('select')].find((each) =>
+      [...each.options].some((option) => option.textContent.includes('Мячи')));
+    set(pick, [...pick.options].find((option) => option.textContent.includes('Мячи')).value);
+    pick.dispatchEvent(new Event('change', { bubbles: true }));
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Сохранить').click();`)
+  await sleep(900)
+
+  const linked = await screen()
+  check('связанная операция показывает свою долю рядом с суммой банка', has(linked, 'своя доля'), line(linked, 'своя доля'))
+  check(
+    'доля — половина траты, и сумма банка не подменена',
+    /своя доля 500,00/.test(linked.replace(/ /g, ' ')) && has(linked, '1 000,00'),
+    line(linked, 'своя доля'),
+  )
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()

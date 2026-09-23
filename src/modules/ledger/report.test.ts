@@ -195,3 +195,64 @@ describe('отчёт месяца (Р-29)', () => {
     expect(text).toContain('- Связь: ждали 515,00 ₽, не внесено')
   })
 })
+
+describe('долги в отчёте (Р-31)', () => {
+  const spent = [entry({ kind: 'expense', amount: 300000, date: '2026-09-12', categoryId: 'food' })]
+
+  it('чужая доля названа суммой и числом операций', () => {
+    const text = flat(
+      monthReportText(
+        input(spent, {
+          debts: { cut: { amount: 200000, entries: 1 }, owedToMe: 0, owedByMe: 0, broken: 0, mixed: 0, noSelf: false },
+        }),
+      ),
+    )
+    expect(text).toContain('- За компанию в расход не вошло: 2 000,00 ₽ по 1 операции')
+  })
+
+  it('долг на конец месяца назван обеими сторонами', () => {
+    const text = flat(
+      monthReportText(
+        input(spent, {
+          debts: { cut: { amount: 0, entries: 0 }, owedToMe: 700000, owedByMe: 100000, broken: 0, mixed: 0, noSelf: false },
+        }),
+      ),
+    )
+    expect(text).toContain('- Долги на конец месяца: вам должны 7 000,00 ₽, вы должны 1 000,00 ₽')
+  })
+
+  it('долгов нет — отчёт о них молчит, а не пишет нули', () => {
+    const text = flat(
+      monthReportText(
+        input(spent, {
+          debts: { cut: { amount: 0, entries: 0 }, owedToMe: 0, owedByMe: 0, broken: 0, mixed: 0, noSelf: false },
+        }),
+      ),
+    )
+    expect(text).not.toContain('За компанию')
+    expect(text).not.toContain('Долги на конец месяца')
+  })
+
+  it('связь, ведущая в никуда, попадает в «чего приложение не знает»', () => {
+    const text = flat(
+      monthReportText(
+        input(spent, {
+          debts: { cut: { amount: 0, entries: 0 }, owedToMe: 0, owedByMe: 0, broken: 2, mixed: 0, noSelf: false },
+        }),
+      ),
+    )
+    expect(text).toContain('## Чего приложение не знает')
+    expect(text).toContain('- 2 операции связаны с тратой или долгом, которых больше нет')
+  })
+
+  it('без пометки «это я» отчёт говорит, что доли не считались', () => {
+    const text = flat(
+      monthReportText(
+        input(spent, {
+          debts: { cut: { amount: 0, entries: 0 }, owedToMe: 0, owedByMe: 0, broken: 0, mixed: 0, noSelf: true },
+        }),
+      ),
+    )
+    expect(text).toContain('- Доли за компанию не посчитаны: среди людей нет пометки «это я»')
+  })
+})

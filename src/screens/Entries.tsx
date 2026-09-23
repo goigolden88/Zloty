@@ -12,10 +12,13 @@ import {
   type EntryDraft,
 } from '../modules/ledger/entries.ts'
 import { dueThisMonth, enterAll, enterRecurring, leftToPay, type Due } from '../modules/ledger/recurring.ts'
+import { type DebtsData } from '../modules/debts/summary.ts'
+import { useDebts } from '../modules/debts/useDebts.ts'
+import { linkChoices, linkNote } from '../summary/links.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
-import { addMonths, formatDate, formatMonth, monthOf, today } from '../shared/core/dates.ts'
+import { addMonths, formatDate, formatMonth, monthOf, nowIso, today } from '../shared/core/dates.ts'
 import { feedDateText, feedHeading, filterFeed, groupFeed, recordsText } from '../shared/core/feed.ts'
 import { feedItems } from '../registry.ts'
 import { useFeed } from '../shared/screens/useFeed.ts'
@@ -32,6 +35,7 @@ import { Fold } from '../shared/ui/Fold.tsx'
 export function Entries() {
   const ledger = useLedger()
   const entries = useEntries()
+  const debts = useDebts()
   const [month, setMonth] = useState(() => monthOf(today()))
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Entry | null>(null)
@@ -139,7 +143,13 @@ export function Entries() {
               ) : (
                 <ul className="plain">
                   {shown.operations.map((entry) => (
-                    <EntryLine key={entry.id} entry={entry} ledger={ledger.data} onEdit={setEditing} />
+                    <EntryLine
+                      key={entry.id}
+                      entry={entry}
+                      ledger={ledger.data}
+                      debts={debts.data}
+                      onEdit={setEditing}
+                    />
                   ))}
                 </ul>
               )}
@@ -343,17 +353,99 @@ function kindWord(entry: Entry): string {
   return entry.kind === 'income' ? 'доход' : 'расход'
 }
 
+/**
+ * С чем связана операция (Р-31).
+ *
+ * Один список вместо перебора «комната → событие → трата»: связывают редко
+ * и обычно с тем, что случилось в тот же день, — поэтому ближайшее по дате
+ * стоит первым. Угадывать приложение не будет: выбирает человек.
+ */
+function LinkPicker({
+  entry,
+  ledger,
+  debts,
+  onDone,
+}: {
+  entry: Entry
+  ledger: LedgerData
+  debts: DebtsData
+  onDone: () => void
+}) {
+  const choices = linkChoices(debts, ledger.currencies, entry.date)
+  const [chosen, setChosen] = useState(entry.refs?.[0] ?? '')
+
+  async function save() {
+    const next: Entry = { ...entry, updatedAt: nowIso() }
+    if (chosen) next.refs = [chosen]
+    else delete next.refs
+    await db.put('entries', next)
+    onDone()
+  }
+
+  if (choices.length === 0) {
+    return (
+      <p className="muted">
+        Связывать не с чем: ни трат в комнатах, ни разовых долгов пока нет. Они заводятся на{' '}
+        <Link to="/debts">«Долгах»</Link>.
+      </p>
+    )
+  }
+
+  const groups: ('Траты комнат' | 'Долги и возвраты')[] = ['Траты комнат', 'Долги и возвраты']
+
+  return (
+    <div className="form">
+      <label className="field">
+        С чем связана
+        <select value={chosen} onChange={(event) => setChosen(event.target.value)}>
+          <option value="">Ни с чем — считается целиком</option>
+          {groups.map((group) => {
+            const rows = choices.filter((each) => each.group === group)
+            if (rows.length === 0) return null
+            return (
+              <optgroup key={group} label={group}>
+                {rows.map((each) => (
+                  <option key={each.id} value={each.id}>
+                    {each.label}
+                  </option>
+                ))}
+              </optgroup>
+            )
+          })}
+        </select>
+      </label>
+      <p className="muted">
+        Связана с тратой комнаты — в расход месяца войдёт только ваша доля. Связана с долгом, возвратом или
+        переводом в комнате — не войдёт вовсе: долги не расход и не доход.
+      </p>
+
+      <div className="form__actions">
+        <button type="button" onClick={onDone}>
+          Отмена
+        </button>
+        <button type="button" className="btn--primary" onClick={() => void save()}>
+          Сохранить
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function EntryLine({
   entry,
   ledger,
+  debts,
   onEdit,
 }: {
   entry: Entry
   ledger: LedgerData
+  debts: DebtsData
   onEdit: (entry: Entry) => void
 }) {
   const [asking, setAsking] = useState(false)
+  const [linking, setLinking] = useState(false)
   const category = categoryName(ledger, entry.categoryId)
+  const link = linkNote(entry, debts, ledger.currencies)
 
   return (
     <li className="line">
@@ -369,6 +461,10 @@ function EntryLine({
           {entry.for && ` · за ${formatMonth(entry.for)}`}
         </div>
         {entry.note && <div className="muted">{entry.note}</div>}
+        {/* Сумма банка не подменяется: рядом с ней стоит доля вместе
+            с основанием — за что и в какой комнате (Р-31). */}
+        {link && <div className="muted">{link}</div>}
+        {linking && <LinkPicker entry={entry} ledger={ledger} debts={debts} onDone={() => setLinking(false)} />}
       </div>
 
       {asking ? (
@@ -385,6 +481,11 @@ function EntryLine({
           <button type="button" onClick={() => onEdit(entry)}>
             Изменить
           </button>
+          {entry.kind !== 'transfer' && (
+            <button type="button" onClick={() => setLinking((was) => !was)}>
+              {link ? 'Связь' : 'Связать'}
+            </button>
+          )}
           <button type="button" onClick={() => setAsking(true)}>
             Удалить
           </button>

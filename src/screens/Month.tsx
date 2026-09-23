@@ -8,6 +8,10 @@ import { recordedThrough, type Recorded } from '../modules/ledger/entries.ts'
 import { needed, rareIds, type Need } from '../modules/ledger/need.ts'
 import { dueThisMonth } from '../modules/ledger/recurring.ts'
 import { monthReportText } from '../modules/ledger/report.ts'
+import { type DebtsData } from '../modules/debts/summary.ts'
+import { useDebts } from '../modules/debts/useDebts.ts'
+import { debtsForReport } from '../summary/debts-report.ts'
+import { ownShares } from '../summary/shares.ts'
 import { incomeNotEntered, type RecurringData } from '../modules/ledger/recurring.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
@@ -64,6 +68,7 @@ export function Month() {
   const ledger = useLedger()
   const entries = useEntries()
   const rates = useRates()
+  const debts = useDebts()
   const [month, setMonth] = useState(() => monthOf(today()))
 
   if (whatsNew.show.length > 0) return <WhatsNew changes={whatsNew.show} onDone={whatsNew.dismiss} />
@@ -126,6 +131,9 @@ export function Month() {
               currencies: ledger.data.currencies,
               rates: rates.all,
               base: currency.code,
+              // Связанная операция входит в поток долей, а не суммой (Р-31).
+              // Считает долю сводка: учёт про комнаты не знает.
+              shares: ownShares(entries.all, debts.data).amounts,
             }}
             goal={profile?.savingsGoal ?? null}
             names={new Map(ledger.data.categories.map((each) => [each.id, each.name]))}
@@ -136,6 +144,7 @@ export function Month() {
               entries: entries.all,
             }}
             accounts={ledger.data.accounts}
+            debts={debts.data}
           />
         </>
       )}
@@ -151,6 +160,7 @@ function Report({
   names,
   waiting,
   accounts,
+  debts,
 }: {
   month: string
   onMonth: (month: string) => void
@@ -159,6 +169,7 @@ function Report({
   names: Map<string, string>
   waiting: RecurringData
   accounts: readonly Account[]
+  debts: DebtsData
 }) {
   const now = today()
   // По какое число доведены записи — тем же правилом, каким промпт импорта
@@ -306,6 +317,7 @@ function Report({
             excluded: seen.excluded,
             due: dueThisMonth(waiting, month),
             names,
+            debts: debtsForReport({ month, entries: data.entries, debts, data }),
           })
         }
       />

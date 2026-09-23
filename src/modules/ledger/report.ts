@@ -42,6 +42,18 @@ export type ReportInput = {
   recorded: Recorded | null
   /** Сколько платежей по редким шаблонам вынесено из обычного месяца (Р-27). */
   excluded: number
+  /**
+   * Долги месяца в базовой валюте (Р-31). Готовит их сводка
+   * (`src/summary/debts-report.ts`): про комнаты учёт не знает.
+   */
+  debts?: {
+    cut: { amount: number; entries: number }
+    owedToMe: number
+    owedByMe: number
+    broken: number
+    mixed: number
+    noSelf: boolean
+  }
   due: readonly Due[]
   names: ReadonlyMap<string, string>
 }
@@ -149,6 +161,22 @@ function totals(input: ReportInput, show: Show): string[] {
     out.push(`- Переводов между своими счетами: ${report.transfers} — они не расход и не доход`)
   }
 
+  // Без этих двух строк беседа увидит расход меньше банковского и объяснит
+  // разницу привычками человека — уверенно и неверно (Р-31).
+  const debts = input.debts
+  if (debts && debts.cut.entries > 0) {
+    out.push(
+      `- За компанию в расход не вошло: ${show(debts.cut.amount)} по ${debts.cut.entries}` +
+        ` ${ops(debts.cut.entries)} — это чужие доли, их вернут`,
+    )
+  }
+  if (debts && (debts.owedToMe > 0 || debts.owedByMe > 0)) {
+    out.push(
+      `- Долги на конец месяца: вам должны ${show(debts.owedToMe)},` +
+        ` вы должны ${show(debts.owedByMe)} — не расход и не доход`,
+    )
+  }
+
   return [...out, '']
 }
 
@@ -159,6 +187,11 @@ function times(report: MonthReport): number {
 
 function ops(n: number): string {
   return plural(n, ['операции', 'операциям', 'операциям'])
+}
+
+/** «2 операции связаны» — именительный: здесь операция подлежащее, а не «по чему». */
+function opsAre(n: number): [string, string] {
+  return [plural(n, ['операция', 'операции', 'операций']), plural(n, ['связана', 'связаны', 'связаны'])]
 }
 
 function percent(share: number): string {
@@ -353,6 +386,25 @@ function unknownPart(input: ReportInput, show: Show): string[] {
 
   if (input.categories.rows.length === 0) {
     out.push('- По категориям расход сравнивать не с чем: месяцев с операциями пока мало')
+  }
+
+  const debts = input.debts
+  if (debts?.noSelf) {
+    out.push('- Доли за компанию не посчитаны: среди людей нет пометки «это я», и чью долю брать — неизвестно')
+  }
+  if (debts && debts.broken > 0) {
+    const [what, how] = opsAre(debts.broken)
+    out.push(
+      `- ${debts.broken} ${what} ${how} с тратой или долгом, которых больше нет:` +
+        ' в расход они вошли целиком',
+    )
+  }
+  if (debts && debts.mixed > 0) {
+    const [what, how] = opsAre(debts.mixed)
+    out.push(
+      `- ${debts.mixed} ${what} ${how} с записями в разных валютах:` +
+        ' сложить их доли нельзя, и в расход они вошли целиком',
+    )
   }
 
   if (out.length === 0) return []

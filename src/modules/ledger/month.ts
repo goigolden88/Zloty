@@ -76,6 +76,15 @@ export type MonthData = {
   currencies: readonly Currency[]
   rates: readonly Rate[]
   base: string
+  /**
+   * Своя доля связанных операций по `id` (Р-31): есть запись — в поток
+   * входит она, а не сумма операции.
+   *
+   * Считает её не учёт: долги — соседний модуль, и знает их только сводка
+   * (`src/summary/shares.ts`). Сюда доля приходит готовой, и модуль учёта
+   * по-прежнему ничего не знает про комнаты.
+   */
+  shares?: ReadonlyMap<string, Money>
 }
 
 function decimalsOf(currencies: readonly Currency[], code: string): number | null {
@@ -110,8 +119,13 @@ export function convertTo(
 
 function toBase(entry: Entry, data: MonthData): Converted {
   const day = entry.date ?? entry.period?.to ?? ''
-  const result = convertTo(entry.money, day, data)
+  const result = convertTo(flowOf(entry, data), day, data)
   return 'missing' in result ? { entry, missing: result.missing } : { entry, amount: result.amount }
+}
+
+/** Сколько из операции идёт в поток: доля, если связь есть, иначе вся сумма (Р-31). */
+export function flowOf(entry: Entry, data: MonthData): Money {
+  return data.shares?.get(entry.id) ?? entry.money
 }
 
 function sumOf(entries: readonly Entry[], data: MonthData): Sum {
