@@ -10,6 +10,8 @@ import {
   createAccount,
   createCategory,
   createCurrency,
+  perMajorOf,
+  unitFromPerMajor,
   currencyDraftProblem,
   findByName,
   importableAccounts,
@@ -201,5 +203,27 @@ describe('категории', () => {
     const now = updateCategory(was, { name: 'Подарки', side: 'income' })
     expect(now.id).toBe('a')
     expect(now.side).toBe('income')
+  })
+})
+
+describe('единица показа — словами человека', () => {
+  it('«в одном BTC — 1000 mBTC» даёт множитель в сатоши', () => {
+    expect(unitFromPerMajor(8, 'mBTC', 1000)).toEqual({ unit: { name: 'mBTC', factor: 100000 } })
+  })
+
+  it('без имени единицы нет — и это не ошибка', () => {
+    expect(unitFromPerMajor(8, '  ', 1000)).toEqual({ unit: null })
+  })
+
+  it('единица мельче минимальной или делящая её не нацело — отказ', () => {
+    expect(unitFromPerMajor(2, 'мкр', 1000)).toHaveProperty('problem')
+    expect(unitFromPerMajor(8, 'треть', 3)).toHaveProperty('problem')
+    expect(unitFromPerMajor(8, 'mBTC', 0)).toHaveProperty('problem')
+  })
+
+  it('обратно в поле формы: у mBTC — 1000, без единицы — пусто', () => {
+    const btc: Currency = { id: 'b', updatedAt: '', code: 'BTC', name: 'Биткойн', decimals: 8, unit: { name: 'mBTC', factor: 100000 }, order: 0 }
+    expect(perMajorOf(btc)).toBe(1000)
+    expect(perMajorOf({ ...btc, unit: undefined })).toBeNull()
   })
 })

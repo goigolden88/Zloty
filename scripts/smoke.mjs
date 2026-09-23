@@ -1491,6 +1491,116 @@ async function scenario(profile) {
     line(linked, 'своя доля'),
   )
 
+  // ── Капитал (Этап 4): снимки, курсы через доллар, отложенный платёж,
+  //    заметки, «Новый снимок» строкой. Экран тестами не покрыть — только
+  //    прогоном. Проверяются сами числа, а не слова рядом с ними: слова
+  //    остаются верными, когда число посчитано неверно (Журнал 22.09.2026).
+  //    Всё выдумано (CLAUDE.md, «Личные данные»).
+  await go('/capital')
+  const capital0 = await screen()
+  check('вкладка «Капитал» открылась и честно пуста', has(capital0, 'Снимков ещё нет'), line(capital0, 'Снимков'))
+
+  // Капитал на 01.09 — до всех долгов прогона (они заведены сегодня), так что
+  // итог считается в уме: 12 000 + 0,01 BTC × 50 000 $ × 90 + 100 $ × 90 − 5 000.
+  const CAPITAL = JSON.stringify({
+    format: 'zloty-import',
+    version: 1,
+    currencies: [
+      { code: 'USD', name: 'Доллар', decimals: 2 },
+      { code: 'BTC', name: 'Биткойн', decimals: 8, unit: { name: 'mBTC', factor: 100000 } },
+    ],
+    accounts: [
+      { name: 'Кошелёк', currency: 'BTC', kind: 'savings' },
+      { name: 'Площадка', currency: 'USD', kind: 'investment' },
+    ],
+    rates: [
+      { date: '2026-09-01', from: 'USD', to: 'RUB', rate: 90 },
+      { date: '2026-09-01', from: 'BTC', to: 'USD', rate: 50000 },
+    ],
+    balances: [
+      { account: 'Синий банк', date: '2026-09-01', part: 'на счёте', amount: 12000 },
+      { account: 'Синий банк', date: '2026-09-01', part: 'кредитка', amount: 5000, deferred: true },
+      { account: 'Кошелёк', date: '2026-09-01', amount: 0.01 },
+      { account: 'Площадка', date: '2026-09-01', amount: 100 },
+    ],
+    notes: [{ date: '2026-09-01', text: 'прогон: заметка из файла' }],
+  })
+  await go('/import')
+  await act(`set(document.querySelector('.import__text'), ${JSON.stringify(CAPITAL)});`)
+  await sleep(300)
+  await act(`byText('button', 'Разобрать').click();`)
+  await sleep(700)
+  const capitalPlan = await screen()
+  check(
+    'сводка называет снимки и заметки числом',
+    /4\s+снимка/.test(capitalPlan.replace(/ /g, ' ')) && /1\s+заметка/.test(capitalPlan.replace(/ /g, ' ')),
+    line(capitalPlan, 'Добавится'),
+  )
+  await act(`startsWith('button', 'Загрузить ').click();`)
+  await sleep(900)
+
+  await go('/capital')
+  await sleep(500)
+  const capital1 = (await screen()).replace(/ /g, ' ')
+  check('капитал на дату снимка — 61 000 ₽', has(capital1, 'Капитал на 01.09.2026') && has(capital1, '61 000,00 ₽'), line(capital1, '61 000'))
+  check('сбережения — как лежат, кредитка внутри: 57 000 ₽', /Сбережения[\s\S]{0,40}57 000,00 ₽/.test(capital1), line(capital1, '57 000'))
+  check('вложения — доллары по 90: 9 000 ₽', /Вложения[\s\S]{0,40}9 000,00 ₽/.test(capital1), line(capital1, '9 000,00'))
+  check('отложенный платёж — своей строкой и с минусом', has(capital1, '−5 000,00 ₽'), line(capital1, '−5 000'))
+  check('биткойн — через доллар, и оба курса названы (Р-37)', has(capital1, '50 000 USD за BTC и 90 RUB за USD'), line(capital1, 'за BTC'))
+  check('счета без снимка названы, а не пропали', has(capital1, 'без снимка, в итог не входят') && has(capital1, 'Наличные'), line(capital1, 'без снимка'))
+  check('заметка из файла — у своей даты', has(capital1, 'прогон: заметка из файла'), line(capital1, 'прогон: заметка'))
+  check('первая точка сравнивать не с чем', has(capital1, 'первый снимок — сравнивать не с чем'), line(capital1, 'первый снимок'))
+
+  // «Новый снимок» строкой: поля — прошлыми значениями, в единице показа.
+  await act(`byText('button', 'Новый снимок').click();`)
+  await sleep(500)
+  const form = await act(`
+    const rows = [...document.querySelectorAll('.snapshot-row')];
+    const wallet = rows.find((row) => row.textContent.includes('Кошелёк'));
+    return JSON.stringify({ wallet: wallet?.querySelector('input[inputmode="decimal"]')?.value ?? null, same: wallet?.textContent.includes('как в прошлый раз') ?? false });
+  `)
+  const prefilled = JSON.parse(form ?? '{}')
+  check('поле кошелька заполнено прошлым снимком в mBTC: 10', prefilled.wallet === '10', String(prefilled.wallet))
+  check('и нетронутая строка так и названа', prefilled.same === true, String(prefilled.same))
+
+  await act(`
+    const rows = [...document.querySelectorAll('.snapshot-row')];
+    const platform = rows.find((row) => row.textContent.includes('Площадка'));
+    set(platform.querySelector('input[inputmode="decimal"]'), '110');
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать снимок').click();`)
+  await sleep(900)
+  const capital2 = (await screen()).replace(/ /g, ' ')
+  const todayShown = new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  check('снимок записан строкой на сегодня, и открыт он', has(capital2, `Капитал на ${todayShown}`), line(capital2, 'Капитал на'))
+  check('площадка по новому снимку: 110 $ × 90 = 9 900 ₽', /Площадка[\s\S]{0,80}9 900,00 ₽/.test(capital2), line(capital2, '9 900'))
+  check('сравнение с прошлым снимком — числом', has(capital2, 'к 01.09.2026 — было 61 000,00 ₽'), line(capital2, 'к 01.09.2026'))
+
+  // Заметка к дате — руками.
+  await act(`set(document.querySelector('.block textarea'), 'прогон: заметка руками');`)
+  await sleep(200)
+  await act(`byText('button', 'Добавить заметку').click();`)
+  await sleep(700)
+  const capital3 = await screen()
+  check('заметка к дате записана', has(capital3, 'прогон: заметка руками'), line(capital3, 'заметка руками'))
+
+  // Единица показа — словами человека, и у валюты есть «Изменить».
+  await go('/books')
+  await act(`if (!document.body.innerText.includes('показывается в mBTC')) startsWith('.fold__btn', 'Валюты').click();`)
+  await sleep(400)
+  const booksCapital = (await screen()).replace(/ /g, ' ')
+  check('у биткойна видна единица показа: в одном BTC — 1000', has(booksCapital, 'показывается в mBTC: в одном BTC — 1000'), line(booksCapital, 'mBTC'))
+  await act(`
+    const item = [...document.querySelectorAll('.line')].find((el) => el.textContent.includes('показывается в mBTC'));
+    [...item.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Изменить').click();
+  `)
+  await sleep(400)
+  const perMajor = await act(`return document.querySelector('input[placeholder="1000"]')?.value ?? null;`)
+  check('правка валюты открывается с единицей: 1000 в одном', perMajor === '1000', String(perMajor))
+  await act(`byText('button', 'Отмена').click();`)
+  await sleep(300)
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()

@@ -5,6 +5,7 @@ import { db, sync } from './app/core.ts'
 import { CoreProvider } from './shared/ui/core.tsx'
 import { Layout, type Tab } from './shared/ui/Layout.tsx'
 import { Books } from './screens/Books.tsx'
+import { Capital } from './screens/Capital.tsx'
 import { Debts } from './screens/Debts.tsx'
 import { Entries } from './screens/Entries.tsx'
 import { Help } from './screens/Help.tsx'
@@ -31,6 +32,9 @@ const TABS: readonly Tab[] = [
   { to: '/', name: 'Месяц', end: true },
   { to: '/entries', name: 'Операции', end: false },
   { to: '/debts', name: 'Долги', end: false },
+  // Капитал открывают раз в месяц, но это второй главный вопрос приложения
+  // — «сколько у меня всего» (Р-07), и отдельной ссылкой из шапки он бы потерялся.
+  { to: '/capital', name: 'Капитал', end: false },
 ]
 
 export function App() {
@@ -49,6 +53,7 @@ export function App() {
                 чтобы на неё можно было вернуться ссылкой (Р-30). */}
             <Route path="debts" element={<Debts />} />
             <Route path="debts/:roomId" element={<Room />} />
+            <Route path="capital" element={<Capital />} />
             <Route path="import" element={<Import />} />
             <Route path="books" element={<Books />} />
             <Route path="settings" element={<Settings />} />

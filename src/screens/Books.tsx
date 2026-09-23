@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
-import type { Account, Category, Recurring } from '../app/model.ts'
+import type { Account, Category, Currency, Recurring } from '../app/model.ts'
 import {
   accountProblem,
   active,
@@ -12,6 +12,9 @@ import {
   createCategory,
   createCurrency,
   currencyDraftProblem,
+  perMajorOf,
+  unitFromPerMajor,
+  updateCurrency,
   moved,
   setArchived,
   sortedCurrencies,
@@ -660,6 +663,9 @@ function Currencies({ data }: { data: LedgerData }) {
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [decimals, setDecimals] = useState<number | null>(null)
+  const [unitName, setUnitName] = useState('')
+  const [perMajor, setPerMajor] = useState('')
+  const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState('')
 
   // Свёрнут ли блок, решается один раз при открытии экрана, а не считается
@@ -672,13 +678,17 @@ function Currencies({ data }: { data: LedgerData }) {
   const shownDecimals = decimals ?? suggestDecimals(code.trim().toUpperCase())
 
   async function add() {
-    const draft: CurrencyDraft = { code, name, decimals: shownDecimals }
+    const unit = unitFromPerMajor(shownDecimals, unitName, Number(perMajor.replace(',', '.')))
+    if ('problem' in unit) return setError(unit.problem)
+    const draft: CurrencyDraft = unit.unit ? { code, name, decimals: shownDecimals, unit: unit.unit } : { code, name, decimals: shownDecimals }
     const problem = currencyDraftProblem(data.currencies, draft)
     if (problem) return setError(problem)
     setError('')
     setCode('')
     setName('')
     setDecimals(null)
+    setUnitName('')
+    setPerMajor('')
     await db.put('currencies', createCurrency(data.currencies, draft))
   }
 
@@ -695,14 +705,28 @@ function Currencies({ data }: { data: LedgerData }) {
       </p>
 
       <ul className="plain">
-        {list.map((each) => (
-          <li key={each.id} className="line">
-            <div className="line__main">
-              <b>{each.code}</b> <span className="muted">— {each.name}, знаков: {each.decimals}</span>
-              {each.unit && <span className="muted"> · показывается в {each.unit.name}</span>}
-            </div>
-          </li>
-        ))}
+        {list.map((each) =>
+          editing === each.id ? (
+            <li key={each.id}>
+              <CurrencyEdit record={each} list={data.currencies} onDone={() => setEditing(null)} />
+            </li>
+          ) : (
+            <li key={each.id} className="line">
+              <div className="line__main">
+                <b>{each.code}</b> <span className="muted">— {each.name}, знаков: {each.decimals}</span>
+                {each.unit && (
+                  <span className="muted">
+                    {' '}
+                    · показывается в {each.unit.name}: в одном {each.code} — {perMajorOf(each)}
+                  </span>
+                )}
+              </div>
+              <button type="button" onClick={() => setEditing(each.id)}>
+                Изменить
+              </button>
+            </li>
+          ),
+        )}
       </ul>
 
       <div className="form">
@@ -727,6 +751,7 @@ function Currencies({ data }: { data: LedgerData }) {
             />
           </label>
         </div>
+        <UnitFields code={code.trim().toUpperCase()} name={unitName} perMajor={perMajor} onName={setUnitName} onPerMajor={setPerMajor} />
 
         {error && <p className="error">{error}</p>}
 
@@ -737,6 +762,84 @@ function Currencies({ data }: { data: LedgerData }) {
         </div>
       </div>
     </Fold>
+  )
+}
+
+/**
+ * Единица показа словами человека: «в одном BTC — 1000 mBTC» (Р-04, п. 2).
+ * Про минимальные единицы и множитель не спрашиваем: их считает `unitFromPerMajor`.
+ */
+function UnitFields({
+  code,
+  name,
+  perMajor,
+  onName,
+  onPerMajor,
+}: {
+  code: string
+  name: string
+  perMajor: string
+  onName: (value: string) => void
+  onPerMajor: (value: string) => void
+}) {
+  return (
+    <div className="row row--wrap">
+      <label className="field">
+        Показывать в единице, если нужно
+        <input value={name} onChange={(event) => onName(event.target.value)} placeholder="mBTC" size={8} />
+      </label>
+      {name.trim() && (
+        <label className="field">
+          Сколько её в одном {code || 'единице валюты'}
+          <input value={perMajor} onChange={(event) => onPerMajor(event.target.value)} placeholder="1000" inputMode="numeric" size={8} />
+        </label>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Правка валюты: название и единица показа. Код и число знаков не меняются —
+ * на код ссылаются счета, а в числе знаков уже записаны суммы.
+ */
+function CurrencyEdit({ record, list, onDone }: { record: Currency; list: readonly Currency[]; onDone: () => void }) {
+  const [name, setName] = useState(record.name)
+  const [unitName, setUnitName] = useState(record.unit?.name ?? '')
+  const [perMajor, setPerMajor] = useState(String(perMajorOf(record) ?? ''))
+  const [error, setError] = useState('')
+
+  async function save() {
+    const unit = unitFromPerMajor(record.decimals, unitName, Number(perMajor.replace(',', '.')))
+    if ('problem' in unit) return setError(unit.problem)
+    const draft: CurrencyDraft = unit.unit
+      ? { code: record.code, name, decimals: record.decimals, unit: unit.unit }
+      : { code: record.code, name, decimals: record.decimals }
+    const problem = currencyDraftProblem(list, draft, record.id)
+    if (problem) return setError(problem)
+    await db.put('currencies', updateCurrency(record, draft))
+    onDone()
+  }
+
+  return (
+    <div className="form">
+      <p>
+        <b>{record.code}</b> <span className="muted">— код и знаков после запятой ({record.decimals}) не меняются</span>
+      </p>
+      <label className="field">
+        Название
+        <input value={name} onChange={(event) => setName(event.target.value)} />
+      </label>
+      <UnitFields code={record.code} name={unitName} perMajor={perMajor} onName={setUnitName} onPerMajor={setPerMajor} />
+      {error && <p className="error">{error}</p>}
+      <div className="form__actions">
+        <button type="button" onClick={onDone}>
+          Отмена
+        </button>
+        <button type="button" className="btn--primary" onClick={() => void save()}>
+          Сохранить
+        </button>
+      </div>
+    </div>
   )
 }
 

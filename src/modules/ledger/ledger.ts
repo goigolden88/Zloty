@@ -155,6 +155,34 @@ export function updateCurrency(record: Currency, draft: CurrencyDraft): Currency
   return asCurrency(draft, { id: record.id, updatedAt: nowIso(), order: record.order })
 }
 
+/**
+ * Единица показа из того, как её говорит человек: «в одном BTC — 1000 mBTC».
+ *
+ * В записи хранится множитель — сколько минимальных единиц в единице показа
+ * (у mBTC — 100 000 сатоши), но спрашивать человека про сатоши нельзя.
+ * Имени нет — единицы нет, это не ошибка. Множитель обязан выйти целым:
+ * иначе единица показа дробит минимальную единицу, а её дробить некуда.
+ */
+export function unitFromPerMajor(
+  decimals: number,
+  name: string,
+  perMajor: number,
+): { unit: { name: string; factor: number } | null } | { problem: string } {
+  const clean = cleanName(name)
+  if (!clean) return { unit: null }
+  if (!Number.isFinite(perMajor) || perMajor <= 0) return { problem: `сколько ${clean} в одной единице валюты — число больше нуля` }
+  const factor = 10 ** decimals / perMajor
+  if (!Number.isInteger(factor) || factor < 1) {
+    return { problem: `${clean} мельче минимальной единицы валюты или делит её не нацело — так не бывает` }
+  }
+  return { unit: { name: clean, factor } }
+}
+
+/** Сколько единиц показа в одной единице валюты: у mBTC — 1000. Для поля формы. */
+export function perMajorOf(currency: Currency): number | null {
+  return currency.unit ? 10 ** currency.decimals / currency.unit.factor : null
+}
+
 /** Валюты сортируются по порядку, а ищутся по коду: `Named` из кода не выводится. */
 function asNamed(list: readonly Currency[]): Named[] {
   return list.map((each) => ({ id: each.id, name: each.code, order: each.order, deleted: each.deleted }))
