@@ -1452,6 +1452,24 @@ async function scenario(profile) {
     line(money, 'не старше'),
   )
 
+  // Долги в справке: главное правило — долг не расход и не доход (Р-05, Р-31).
+  await act(`startsWith('.fold__btn', 'Долги и расход месяца').click();`)
+  await sleep(500)
+  const helpDebts = await screen()
+  check(
+    'в справке сказано, что долг не расход и не доход, и как связать операцию',
+    has(helpDebts, 'не расход и не доход') && has(helpDebts, 'Связать'),
+    line(helpDebts, 'не расход и не доход'),
+  )
+  await act(`startsWith('.fold__btn', 'Что уже есть').click();`)
+  await sleep(500)
+  const overview = await screen()
+  check(
+    '«что уже есть» говорит про долги как про сделанное, а не обещает их',
+    has(overview, 'Операцию, оплаченную за компанию') && !has(overview, 'Долги и капитал — следующими'),
+    line(overview, 'за компанию'),
+  )
+
   // ── Настройки: синхронизация и копия — экраны ядра, счётчики — свои.
   await go('/settings')
   const settings = await screen()
