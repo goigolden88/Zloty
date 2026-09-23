@@ -1685,6 +1685,20 @@ async function scenario(profile) {
     has(overview, 'Операцию, оплаченную за компанию') && !has(overview, 'Долги и капитал — следующими'),
     line(overview, 'за компанию'),
   )
+  check(
+    '«что уже есть» говорит про капитал как про сделанное, а не обещает его',
+    has(overview, 'сколько у вас всего на дату') && !has(overview, 'Ещё нет: капитала'),
+    line(overview, 'Капитал'),
+  )
+  // Раздел капитала: имя источника курсов — из константы, а не вписано.
+  await act(`startsWith('.fold__btn', 'Капитал: откуда').click();`)
+  await sleep(500)
+  const helpCapital = await screen()
+  check(
+    'в справке про капитал — отложенный платёж и источник курсов по имени',
+    has(helpCapital, 'Отложенный платёж') && has(helpCapital, 'спрашивает currency-api'),
+    line(helpCapital, 'спрашивает'),
+  )
 
   // ── Настройки: синхронизация и копия — экраны ядра, счётчики — свои.
   await go('/settings')
