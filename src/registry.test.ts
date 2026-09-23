@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
 import { SYNCED_STORES } from './app/model.ts'
+import { fetchRates, RATE_SOURCE } from './modules/money/currency-api.ts'
 import { importPrompt, planImport, type Data } from './registry.ts'
 
 /** Всё выдумано: счета, суммы, заметки (CLAUDE.md, «Личные данные»). */
@@ -67,5 +68,16 @@ describe('промпт', () => {
     expect(prompt).toContain('"balances"')
     expect(prompt).toContain('"notes"')
     expect(prompt).toContain('"deferred"')
+  })
+})
+
+describe('курсы из публичного источника (Р-38)', () => {
+  it('ответ источника становится файлом, который проходит тот же импорт, и помнит источник', async () => {
+    const sample = { date: '2026-09-01', rub: { usd: 0.0115849, btc: 0.000000147 } }
+    const fetcher = async () => ({ ok: true, status: 200, json: async () => sample })
+    const result = await fetchRates(['2026-09-01'], 'RUB', ['USD', 'BTC'], fetcher)
+    const plan = planImport(result.file, empty(), ctx)
+    expect(plan.issues).toEqual([])
+    expect(plan.writes.rates?.map((each) => each.source)).toEqual([RATE_SOURCE, RATE_SOURCE])
   })
 })

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
-import type { Account, Currency, Note } from '../app/model.ts'
+import type { Account, Currency, Note, Rate } from '../app/model.ts'
 import { capitalDates, staleOf, type Holding } from '../modules/capital/capital.ts'
 import { createNote, noteProblem, notesOn, updateNote } from '../modules/capital/notes.ts'
 import { draftRow, rowWrites, unchanged, withDeferred, type RowDraft } from '../modules/capital/row.ts'
@@ -11,7 +11,10 @@ import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useRates } from '../modules/ledger/useRates.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
+import { fetchRates, RATE_SOURCE } from '../modules/money/currency-api.ts'
+import { rateProblem, ratesOn, rateWrite } from '../modules/money/rate-records.ts'
 import type { RateLeg } from '../modules/money/rates.ts'
+import { planImport, type Data } from '../registry.ts'
 import { formatDate, formatDateLoose, nowIso, plural, today } from '../shared/core/dates.ts'
 import { ulid } from '../shared/core/id.ts'
 import { BarChart, type BarItem } from '../shared/ui/BarChart.tsx'
@@ -175,6 +178,7 @@ function Body({
       <Total capital={capital} previous={previous} show={show} data={data} />
       <Parts capital={capital} show={show} currencies={data.currencies} />
       <Notes date={date} notes={notes} />
+      <Rates date={date} data={data} series={series} />
       <Chart series={series} show={show} />
       <Points series={series} chosen={date} show={show} onChoose={onChoose} />
     </>
@@ -495,6 +499,237 @@ function NoteLine({ note }: { note: Note }) {
         )}
       </div>
     </li>
+  )
+}
+
+// ─── Курсы ─────────────────────────────────────────────────────────────────
+
+/** Откуда курс — словами. */
+function sourceText(source: string): string {
+  if (source === 'manual') return 'внесён руками'
+  if (source === 'import') return 'из файла'
+  return `из ${source}`
+}
+
+/**
+ * Курсы на дату капитала, курс руками и «Подтянуть курсы» (Р-04, Р-38).
+ *
+ * Подтянутое не пишется само: ответ источника становится файлом импорта,
+ * проходит ту же проверку, что выписка, и записывается по кнопке (Р-09).
+ */
+function Rates({ date, data, series }: { date: string; data: FullData; series: ReturnType<typeof capitalSeries> }) {
+  const list = ratesOn(data.rates, date)
+  const codes = [...new Set([...data.currencies.filter((each) => !each.deleted).map((each) => each.code)])].filter(
+    (code) => code !== data.base,
+  )
+  // Даты, где пересчёту не хватает курса, — и сегодня (Р-38).
+  const lacking = series.filter((point) => point.missing > 0).map((point) => point.date)
+
+  return (
+    <Fold id="capital:rates" title={`Курсы на ${formatDate(date)}`} summary={<span className="muted">{list.length}</span>} folded>
+      {list.length === 0 && <p className="muted">На эту дату курсов нет — пересчёт берёт ближайший более ранний.</p>}
+      <ul className="plain">
+        {list.map((each) => (
+          <RateLine key={each.id} rate={each} all={data.rates} />
+        ))}
+      </ul>
+      <RateForm key={date} date={date} codes={codes} base={data.base} all={data.rates} />
+      <FetchRates dates={lacking} codes={codes} base={data.base} />
+    </Fold>
+  )
+}
+
+function RateLine({ rate, all }: { rate: Rate; all: readonly Rate[] }) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(String(rate.rate))
+  const [error, setError] = useState('')
+  const [sure, setSure] = useState(false)
+
+  if (editing) {
+    const save = async () => {
+      const draft = { date: rate.date, from: rate.from, to: rate.to, rate: Number(value.replace(',', '.')) }
+      const problem = rateProblem(all, draft, rate.id)
+      if (problem) return setError(problem)
+      await db.put('rates', rateWrite(all, draft))
+      setEditing(false)
+    }
+    return (
+      <li className="form">
+        <label className="field">
+          Сколько {rate.to} за один {rate.from}
+          <input inputMode="decimal" value={value} onChange={(event) => setValue(event.target.value)} />
+        </label>
+        {error && <p className="error">{error}</p>}
+        <div className="form__actions">
+          <button type="button" onClick={() => setEditing(false)}>
+            Отмена
+          </button>
+          <button type="button" className="btn--primary" onClick={() => void save()}>
+            Сохранить
+          </button>
+        </div>
+      </li>
+    )
+  }
+
+  return (
+    <li className="line">
+      <div className="line__main">
+        {rate.rate.toLocaleString('ru-RU', { maximumFractionDigits: 6 })} {rate.to} за {rate.from}
+        <div className="basis">{sourceText(rate.source)}</div>
+      </div>
+      <div className="row">
+        <button type="button" onClick={() => setEditing(true)}>
+          Изменить
+        </button>
+        {sure ? (
+          <button type="button" className="btn--danger" onClick={() => void db.remove('rates', rate.id)}>
+            Точно удалить
+          </button>
+        ) : (
+          <button type="button" onClick={() => setSure(true)}>
+            Удалить
+          </button>
+        )}
+      </div>
+    </li>
+  )
+}
+
+function RateForm({ date, codes, base, all }: { date: string; codes: readonly string[]; base: string; all: readonly Rate[] }) {
+  const [day, setDay] = useState(date)
+  const [from, setFrom] = useState(codes[0] ?? '')
+  const [to, setTo] = useState(base)
+  const [value, setValue] = useState('')
+  const [error, setError] = useState('')
+  const [note, setNote] = useState('')
+
+  async function save() {
+    const draft = { date: day, from, to, rate: Number(value.replace(',', '.')) }
+    const problem = rateProblem(all, draft)
+    if (problem) return setError(problem)
+    setError('')
+    setValue('')
+    await db.put('rates', rateWrite(all, draft))
+    setNote(`Записано: ${draft.rate.toLocaleString('ru-RU', { maximumFractionDigits: 6 })} ${to} за ${from} на ${formatDate(day)}`)
+  }
+
+  const options = [base, ...codes]
+  return (
+    <div className="form">
+      <p className="muted">Курс руками: такая пара на эту дату уже есть — она поправится, второй записи не будет.</p>
+      <div className="row row--wrap">
+        <label className="field">
+          Дата
+          <input type="date" value={day} onChange={(event) => setDay(event.target.value)} />
+        </label>
+        <label className="field">
+          Сколько
+          <select value={to} onChange={(event) => setTo(event.target.value)}>
+            {options.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          за один
+          <select value={from} onChange={(event) => setFrom(event.target.value)}>
+            {options.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          Курс
+          <input inputMode="decimal" value={value} placeholder="86,3" onChange={(event) => setValue(event.target.value)} />
+        </label>
+      </div>
+      {error && <p className="error">{error}</p>}
+      {note && <p className="note">{note}</p>}
+      <div className="form__actions">
+        <button type="button" onClick={() => void save()}>
+          Записать курс
+        </button>
+      </div>
+    </div>
+  )
+}
+
+type Pending = { plan: ReturnType<typeof planImport>; failed: { date: string; reason: string }[]; missing: string[] }
+
+function FetchRates({ dates, codes, base }: { dates: readonly string[]; codes: readonly string[]; base: string }) {
+  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<Pending | null>(null)
+  const [note, setNote] = useState('')
+
+  async function ask() {
+    setBusy(true)
+    setNote('')
+    setPending(null)
+    const fetched = await fetchRates([...dates, 'latest'], base, codes)
+    // Та же проверка, что у выписки: ответ источника — обычный файл импорта (Р-09).
+    const snapshot = (await db.exportAll()).data as Data
+    const plan = planImport(fetched.file, snapshot, { newId: ulid, now: nowIso() })
+    setPending({ plan, failed: fetched.failed, missing: fetched.missing })
+    setBusy(false)
+  }
+
+  async function apply() {
+    if (!pending) return
+    const rates = pending.plan.writes.rates ?? []
+    await db.putMany('rates', rates)
+    setNote(`Записано курсов: ${rates.length}`)
+    setPending(null)
+  }
+
+  const count = pending?.plan.writes.rates?.length ?? 0
+  return (
+    <div className="form">
+      <p className="muted">
+        Из {RATE_SOURCE} — публичного источника без ключа: на даты снимков, где курса не хватает
+        {dates.length > 0 ? ` (${dates.map((each) => formatDate(each)).join(', ')})` : ' (таких сейчас нет)'}, и на сегодня.
+        Курс рыночный, а не ЦБ. Записывается по кнопке, после сводки.
+      </p>
+      <div className="form__actions">
+        <button type="button" disabled={busy || codes.length === 0} onClick={() => void ask()}>
+          {busy ? 'Спрашиваю…' : 'Подтянуть курсы'}
+        </button>
+      </div>
+      {pending && (
+        <>
+          <p>{count === 0 ? 'Добавлять нечего.' : `Добавится курсов: ${count}.`}</p>
+          {pending.plan.skipped > 0 && <p className="muted">Уже есть — не перезаписаны: {pending.plan.skipped}.</p>}
+          {pending.failed.map((each) => (
+            <p key={each.date} className="error">
+              {each.date}: {each.reason}
+            </p>
+          ))}
+          {pending.missing.length > 0 && (
+            <p className="muted">У источника нет курса: {pending.missing.join(', ')} — внесите руками.</p>
+          )}
+          {pending.plan.issues.map((each, index) => (
+            <p key={index} className="error">
+              {each.title}: {each.reason}
+            </p>
+          ))}
+          <div className="form__actions">
+            <button type="button" onClick={() => setPending(null)}>
+              Отмена
+            </button>
+            {count > 0 && (
+              <button type="button" className="btn--primary" onClick={() => void apply()}>
+                Записать курсы
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      {note && <p className="note">{note}</p>}
+    </div>
   )
 }
 

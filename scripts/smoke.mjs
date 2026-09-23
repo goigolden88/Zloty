@@ -1622,6 +1622,38 @@ async function scenario(profile) {
   check('итог во второй валюте — с курсом, названным как внесён: 90 RUB за USD', has(capital4, '$ по 90 RUB за USD'), line(capital4, 'за USD'))
   check('перевёрнутого курса на экране нет', !has(capital4, 'USD за RUB'), line(capital4, 'USD за RUB'))
 
+  // Курс руками (Р-04): прямой BTC→RUB на сегодня главнее пути через доллар
+  // (Р-37) — 0,01 BTC × 6 000 000 = 60 000 ₽ вместо 45 000.
+  await act(`startsWith('.fold__btn', 'Курсы на').click();`)
+  await sleep(400)
+  await act(`
+    const form = [...document.querySelectorAll('.form')].find((el) => el.textContent.includes('Курс руками'));
+    const selects = form.querySelectorAll('select');
+    set(selects[1], 'BTC');
+    selects[1].dispatchEvent(new Event('change', { bubbles: true }));
+    set(form.querySelector('input[placeholder="86,3"]'), '6000000');
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать курс').click();`)
+  await sleep(900)
+  const capital5 = (await screen()).replace(/ /g, ' ')
+  check('курс руками записан и назван', has(capital5, 'Записано: 6 000 000 RUB за BTC'), line(capital5, 'Записано'))
+  check(
+    'прямой курс главнее пути через доллар: кошелёк — 60 000 ₽',
+    /Кошелёк[\s\S]{0,160}6 000 000 RUB за BTC[\s\S]{0,80}60 000,00 ₽/.test(capital5),
+    line(capital5, '60 000'),
+  )
+
+  // «Подтянуть курсы» (Р-38): в прогоне сети нет — источник обязан быть
+  // назван не ответившим, а в базу не должно попасть ничего.
+  await offline(true)
+  await act(`byText('button', 'Подтянуть курсы').click();`)
+  await waitFor(`document.body.innerText.includes('источник не ответил')`, 30_000)
+  const capital6 = await screen()
+  await offline(false)
+  check('источник не ответил — так и сказано, по дате', has(capital6, 'сегодня: источник не ответил'), line(capital6, 'источник не ответил'))
+  check('и записывать нечего', has(capital6, 'Добавлять нечего') && !has(capital6, 'Записать курсы'), line(capital6, 'Добавлять нечего'))
+
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')
   const help = await screen()

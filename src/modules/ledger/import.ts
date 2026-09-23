@@ -286,6 +286,7 @@ export const ratesImportSpec: ImportSpec = {
     '"from" — код валюты, которую переводим. Обязательно',
     '"to" — код валюты, в которую переводим. Обязательно',
     '"rate" — сколько «to» за одну «from», числом. Дробное — можно. Обязательно',
+    '"source" — откуда курс, если это публичный источник курсов. Из выписки или от меня — не пиши',
   ],
   example: [{ date: '2026-09-15', from: 'USD', to: 'RUB', rate: 81.42 }],
 }
@@ -323,7 +324,9 @@ export function importRates(raw: unknown, data: LedgerImportData, ctx: ImportCon
       continue
     }
 
-    const made: Rate = { id: ctx.newId(), updatedAt: ctx.now, date, from, to, rate, source: 'import' }
+    // Источник курса — если его назвали (Р-38: кнопка «Подтянуть курсы»), иначе импорт.
+    const source = textOf(record.source) ?? 'import'
+    const made: Rate = { id: ctx.newId(), updatedAt: ctx.now, date, from, to, rate, source }
     known.push(made)
     created.push(made)
   }
