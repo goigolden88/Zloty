@@ -104,6 +104,13 @@ let socket
 let seq = 0
 const waiting = new Map()
 
+/**
+ * Подменённый ответ публичного источника курсов (Р-38): прогон не ходит во
+ * внешнюю сеть, но путь «ответ → сводка → запись» проверяет целиком.
+ * Перехват включается шагом сценария, `Fetch.enable` — только на его адреса.
+ */
+let ratesReply = null
+
 function connect(url) {
   socket = new WebSocket(url)
 
@@ -113,6 +120,24 @@ function connect(url) {
     if (message.id !== undefined) {
       waiting.get(message.id)?.(message)
       waiting.delete(message.id)
+      return
+    }
+
+    if (message.method === 'Fetch.requestPaused') {
+      const { requestId, request } = message.params
+      if (ratesReply && request.url.includes('currency-api')) {
+        void send('Fetch.fulfillRequest', {
+          requestId,
+          responseCode: 200,
+          responseHeaders: [
+            { name: 'Content-Type', value: 'application/json' },
+            { name: 'Access-Control-Allow-Origin', value: '*' },
+          ],
+          body: Buffer.from(ratesReply).toString('base64'),
+        })
+      } else {
+        void send('Fetch.continueRequest', { requestId })
+      }
       return
     }
 
@@ -1653,6 +1678,23 @@ async function scenario(profile) {
   await offline(false)
   check('источник не ответил — так и сказано, по дате', has(capital6, 'сегодня: источник не ответил'), line(capital6, 'источник не ответил'))
   check('и записывать нечего', has(capital6, 'Добавлять нечего') && !has(capital6, 'Записать курсы'), line(capital6, 'Добавлять нечего'))
+
+  // Источник ответил (ответ подменён перехватом, числа выдуманы): сводка до
+  // записи называет каждый курс с датой, а после записи — куда он лёг.
+  // Иначе подтянутое на сегодня не видно нигде: блок курсов показывает дату
+  // открытого снимка (находка человека на телефоне, 23.09.2026).
+  ratesReply = JSON.stringify({ date: '2026-09-21', rub: { usd: 0.0125, btc: 0.0000002 } })
+  await send('Fetch.enable', { patterns: [{ urlPattern: '*currency-api*' }] })
+  await act(`byText('button', 'Подтянуть курсы').click();`)
+  await waitFor(`document.body.innerText.includes('Добавится курсов')`, 15_000)
+  const fetched = (await screen()).replace(/ /g, ' ')
+  check('сводка источника перечисляет курсы с датой: 21.09.2026 — 80 RUB за USD', has(fetched, '21.09.2026: 80 RUB за USD'), line(fetched, '21.09.2026'))
+  await act(`byText('button', 'Записать курсы').click();`)
+  await sleep(900)
+  const written = (await screen()).replace(/ /g, ' ')
+  await send('Fetch.disable')
+  ratesReply = null
+  check('после записи сказано, куда легли курсы: 2 — на 21.09.2026', has(written, 'Записано курсов: 2 — на 21.09.2026'), line(written, 'Записано курсов'))
 
   // ── Справка: числа в ней собираются из констант кода, и это видно глазами.
   await go('/help')

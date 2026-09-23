@@ -13,9 +13,9 @@ import { useRates } from '../modules/ledger/useRates.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
 import { fetchRates, RATE_SOURCE } from '../modules/money/currency-api.ts'
 import { rateProblem, ratesOn, rateWrite } from '../modules/money/rate-records.ts'
-import type { RateLeg } from '../modules/money/rates.ts'
+import { RATE_MAX_AGE_DAYS, type RateLeg } from '../modules/money/rates.ts'
 import { planImport, type Data } from '../registry.ts'
-import { formatDate, formatDateLoose, nowIso, plural, today } from '../shared/core/dates.ts'
+import { days, formatDate, formatDateLoose, nowIso, plural, today } from '../shared/core/dates.ts'
 import { ulid } from '../shared/core/id.ts'
 import { BarChart, type BarItem } from '../shared/ui/BarChart.tsx'
 import { Fold } from '../shared/ui/Fold.tsx'
@@ -162,7 +162,7 @@ function Body({
   return (
     <>
       {form || (
-        <div className="row">
+        <div className="row capital-actions">
           <button type="button" className="btn--primary" onClick={() => onAdding(true)}>
             Новый снимок
           </button>
@@ -682,7 +682,13 @@ function FetchRates({ dates, codes, base }: { dates: readonly string[]; codes: r
     if (!pending) return
     const rates = pending.plan.writes.rates ?? []
     await db.putMany('rates', rates)
-    setNote(`Записано курсов: ${rates.length}`)
+    // Куда легли курсы — словами: блок выше показывает курсы только на дату
+    // открытого снимка, и подтянутое на сегодня иначе не видно нигде.
+    const dates = [...new Set(rates.map((each) => each.date))].sort().map((each) => formatDate(each))
+    setNote(
+      `Записано курсов: ${rates.length} — на ${dates.join(', ')}. Они видны в «Курсах» на эту дату, а пересчёт ` +
+        `возьмёт их для снимков с этой даты и позже — не старше ${days(RATE_MAX_AGE_DAYS)}.`,
+    )
     setPending(null)
   }
 
@@ -702,6 +708,16 @@ function FetchRates({ dates, codes, base }: { dates: readonly string[]; codes: r
       {pending && (
         <>
           <p>{count === 0 ? 'Добавлять нечего.' : `Добавится курсов: ${count}.`}</p>
+          {count > 0 && (
+            <ul className="plain">
+              {(pending.plan.writes.rates ?? []).map((each) => (
+                <li key={each.id} className="basis">
+                  {formatDate(each.date)}: {each.rate.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} {each.to} за{' '}
+                  {each.from}
+                </li>
+              ))}
+            </ul>
+          )}
           {pending.plan.skipped > 0 && <p className="muted">Уже есть — не перезаписаны: {pending.plan.skipped}.</p>}
           {pending.failed.map((each) => (
             <p key={each.date} className="error">
