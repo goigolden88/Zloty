@@ -24,7 +24,7 @@ export const config: AppConfig<StoreRecord> = {
 
   // Восемь хранилищ учёта и снимков (Р-11, Р-12) — раскладка версии 1,
   // замороженная с первым релизом. Семь хранилищ долгов завела миграция
-  // на версию 2 (Р-30); сюда они не дописываются никогда.
+  // на версию 2 (Р-30), заметки — на версию 3 (Р-36); сюда они не дописываются никогда.
   v1Stores: V1_STORES,
 
   // Сверх `updatedAt`. Месяц читается по дате, повтор импорта ловится по
@@ -47,6 +47,7 @@ export const config: AppConfig<StoreRecord> = {
     roomTransfers: [],
     loans: [],
     repayments: [],
+    notes: [],
   },
 
   // 02-Архитектура, «Раскладка данных в репозитории». Правило одно на всё:
@@ -72,6 +73,8 @@ export const config: AppConfig<StoreRecord> = {
     roomTransfers: { split: 'month', dir: 'transfers', dateOf: (transfer) => transfer.date },
     loans: { split: 'month', dir: 'loans', dateOf: (loan) => loan.date },
     repayments: { split: 'month', dir: 'repayments', dateOf: (repayment) => repayment.date },
+    // Заметки к капиталу (Р-36) — по своей дате.
+    notes: { split: 'month', dir: 'notes', dateOf: (note) => note.date },
   },
 
   storeNotes: {
@@ -90,6 +93,7 @@ export const config: AppConfig<StoreRecord> = {
     roomTransfers: 'переводы внутри комнаты — кто кому вернул',
     loans: 'разовые долги: дал или взял',
     repayments: 'возвраты разовых долгов, в том числе частями',
+    notes: 'заметки к капиталу — по дате',
   },
 
   importFormat: 'zloty-import',

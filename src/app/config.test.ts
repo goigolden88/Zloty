@@ -7,11 +7,13 @@ import { checkConfig, LOCAL_STORES } from '../shared/core/model.ts'
 import { config } from './config.ts'
 import {
   DEBT_STORES,
+  NOTE_STORES,
   entryDate,
   SCHEMA_VERSION,
   SYNCED_STORES,
   V1_STORES,
   type Entry,
+  type Person,
   type StoreRecord,
 } from './model.ts'
 
@@ -62,10 +64,10 @@ describe('то, что не меняется после первого рели�
     expect([...config.v1Stores]).toEqual([...V1_STORES])
   })
 
-  it('долги дописаны к хранилищам, а не в раскладку версии 1', () => {
-    expect([...config.stores]).toEqual([...V1_STORES, ...DEBT_STORES])
-    expect([...config.stores]).toHaveLength(15)
-    for (const store of DEBT_STORES) {
+  it('долги и заметки дописаны к хранилищам, а не в раскладку версии 1', () => {
+    expect([...config.stores]).toEqual([...V1_STORES, ...DEBT_STORES, ...NOTE_STORES])
+    expect([...config.stores]).toHaveLength(16)
+    for (const store of [...DEBT_STORES, ...NOTE_STORES]) {
       expect(V1_STORES as readonly string[]).not.toContain(store)
     }
   })
@@ -85,23 +87,21 @@ describe('то, что не меняется после первого рели�
   })
 })
 
-describe('миграция на версию 2 — долги (Р-30)', () => {
-  it('версия схемы 2, шаг один и только добавляет', () => {
-    expect(config.schemaVersion).toBe(2)
-    expect(SCHEMA_VERSION).toBe(2)
-    expect(config.migrations).toHaveLength(1)
-    const [step] = config.migrations
-    expect(step?.to).toBe(2)
-    expect(step?.additive).toBe(true)
+describe('миграции: версия 2 — долги (Р-30), версия 3 — заметки (Р-36)', () => {
+  it('версия схемы 3, шагов два, оба только добавляют', () => {
+    expect(config.schemaVersion).toBe(3)
+    expect(SCHEMA_VERSION).toBe(3)
+    expect(config.migrations.map((step) => step.to)).toEqual([2, 3])
+    expect(config.migrations.every((step) => step.additive === true)).toBe(true)
   })
 
-  it('свежая база доезжает до версии 2: все пятнадцать хранилищ есть и принимают запись', async () => {
+  it('свежая база доезжает до версии 3: все шестнадцать хранилищ есть и пусты', async () => {
     for (const store of config.stores) {
       expect(await db.count(store)).toBe(0)
     }
   })
 
-  it('база версии 1 с записями открывается версией 2: учёт цел, хранилища долгов пусты', async () => {
+  it('база версии 1 с записями открывается версией 3: учёт цел, хранилища долгов и заметок пусты', async () => {
     const operation: Entry = {
       id: '01J000000000000000000001',
       updatedAt: '2026-09-20T10:00:00.000Z',
@@ -115,14 +115,25 @@ describe('миграция на версию 2 — долги (Р-30)', () => {
     expect(skipped).toEqual([])
 
     expect(await db.getAll('entries')).toEqual([operation])
-    for (const store of DEBT_STORES) {
+    for (const store of [...DEBT_STORES, ...NOTE_STORES]) {
       expect(await db.count(store)).toBe(0)
     }
   })
 
-  it('слепок, выгруженный на версии 1, приложение принимает: шаг только добавляет', () => {
+  it('база версии 2 с долгами открывается версией 3: долги целы, заметок нет', async () => {
+    const person: Person = { id: '01J000000000000000000002', updatedAt: '2026-09-20T10:00:00.000Z', name: 'Петя' }
+
+    const skipped = await db.createLegacyBase(2, { people: [person] })
+    expect(skipped).toEqual([])
+
+    expect(await db.getAll('people')).toEqual([person])
+    expect(await db.count('notes')).toBe(0)
+  })
+
+  it('слепок, выгруженный на версиях 1 и 2, приложение принимает: шаги только добавляют', () => {
     expect(() => db.checkSnapshotVersion(1)).not.toThrow()
     expect(() => db.checkSnapshotVersion(2)).not.toThrow()
+    expect(() => db.checkSnapshotVersion(3)).not.toThrow()
   })
 })
 
@@ -141,8 +152,8 @@ describe('индексы — те, по которым идут выборки',
     expect([...config.indexes.recurring]).toEqual([])
   })
 
-  it('долгам индексов не заводили: читать по ним ядро всё равно не умеет', () => {
-    for (const store of DEBT_STORES) {
+  it('долгам и заметкам индексов не заводили: читать по ним ядро всё равно не умеет', () => {
+    for (const store of [...DEBT_STORES, ...NOTE_STORES]) {
       expect([...config.indexes[store]]).toEqual([])
     }
   })
@@ -192,6 +203,15 @@ describe('раскладка по файлам', () => {
     const paths = files.map((file) => file.path)
     expect(paths).toContain('entries/2026-08.json')
     expect(paths).toContain('entries/2026-01.json')
+  })
+
+  it('заметка к капиталу ложится в месяц своей даты (Р-36)', () => {
+    expect(config.places.notes.split).toBe('month')
+    const files = layout.buildFiles({
+      ...empty(),
+      notes: [{ id: '01J000000000000000000005', updatedAt: '2026-09-22T10:00:00.000Z', about: 'capital', date: '2026-03-02', text: 'просадка' }],
+    })
+    expect(files.map((file) => file.path)).toContain('notes/2026-03.json')
   })
 
   it('трата события ложится в месяц своей даты, а не даты события', () => {

@@ -174,9 +174,28 @@ export type Balance = Base & {
   date: string
   /** Часть счёта: «карта», «накопительный». Нет — весь счёт. */
   part?: string
-  /** В валюте счёта, целое. */
+  /**
+   * В валюте счёта, целое. Меньше нуля — отложенный платёж: кредитка,
+   * деньги с которой лежат на другом счёте (Р-35). «Сбережения» его не
+   * видят, капитал вычитает отдельной строкой.
+   */
   amount: number
   note?: string
+}
+
+/**
+ * Заметка к модулю на дату: «просад в связи с коррекцией BTC» (Р-36).
+ *
+ * Заметка к счёту — `note` у снимка; эта — к капиталу на дату целиком.
+ * Своя запись, а не поле настроек: слияние идёт по записи, и две заметки,
+ * поправленные на двух устройствах, друг друга не затирают.
+ */
+export type Note = Base & {
+  /** Вид заметки. Следующий — ещё одно значение, без миграции. */
+  about: 'capital'
+  /** ГГГГ-ММ-ДД */
+  date: string
+  text: string
 }
 
 // ─── Долги (Р-01, Р-05, Р-30, Р-31) ────────────────────────────────────────
@@ -306,6 +325,7 @@ export type StoreRecord = {
   roomTransfers: RoomTransfer
   loans: Loan
   repayments: Repayment
+  notes: Note
 }
 
 /**
@@ -335,10 +355,13 @@ export const DEBT_STORES = [
   'repayments',
 ] as const satisfies readonly (keyof StoreRecord)[]
 
-/** Порядок, в котором хранилища пишут импорт и слепок: справочники раньше записей. */
-export const SYNCED_STORES = [...V1_STORES, ...DEBT_STORES] as const satisfies readonly (keyof StoreRecord)[]
+/** Заметки к капиталу — версия 3 (Р-36). */
+export const NOTE_STORES = ['notes'] as const satisfies readonly (keyof StoreRecord)[]
 
-export const SCHEMA_VERSION = 2
+/** Порядок, в котором хранилища пишут импорт и слепок: справочники раньше записей. */
+export const SYNCED_STORES = [...V1_STORES, ...DEBT_STORES, ...NOTE_STORES] as const satisfies readonly (keyof StoreRecord)[]
+
+export const SCHEMA_VERSION = 3
 
 /**
  * Первая миграция схемы (Р-30).
@@ -362,7 +385,25 @@ const DEBTS: Migration = {
   },
 }
 
-export const MIGRATIONS: readonly Migration[] = [DEBTS]
+/**
+ * Вторая миграция схемы (Р-36): хранилище заметок к капиталу.
+ *
+ * Тоже только добавляет — `additive: true`. Индекс — один `updatedAt`, по
+ * той же причине, что у долгов.
+ */
+const NOTES: Migration = {
+  to: 3,
+  note: 'Заметки к капиталу Этапа 4',
+  additive: true,
+  run: (database) => {
+    for (const store of NOTE_STORES) {
+      const created = database.createObjectStore(store, { keyPath: 'id' })
+      created.createIndex('updatedAt', 'updatedAt') // нужен слиянию
+    }
+  },
+}
+
+export const MIGRATIONS: readonly Migration[] = [DEBTS, NOTES]
 
 // ─── Даты записей ──────────────────────────────────────────────────────────
 
