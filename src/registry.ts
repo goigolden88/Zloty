@@ -6,8 +6,7 @@
  * мест, которые знают все модули разом, — вместе с `app.tsx`, `notify.ts`
  * и `screens/`. Модули друг про друга не знают.
  *
- * Растёт по этапам: сейчас — подпись, импорт, строки ленты и markdown;
- * долги и капитал придут своими этапами.
+ * Растёт по этапам: подпись, импорт учёта и капитала, строки ленты и markdown.
  *
  * Отдельного экрана ленты у «Злотых» нет (Р-15): строками ищут внутри
  * «Операций». Строки всё равно собираются здесь — это договор семьи,
@@ -24,6 +23,14 @@ import type { FeedItem } from './shared/core/feed.ts'
 import { mergeResults, type ImportContext, type ImportPlan, type ImportSpec } from './shared/core/importing.ts'
 import { importing } from './app/core.ts'
 import type { StoreRecord } from './app/model.ts'
+import {
+  balancesImportSpec,
+  capitalSpecs,
+  importBalances,
+  importNotes,
+  notesImportSpec,
+  type CapitalImportData,
+} from './modules/capital/import.ts'
 import { lastDayOn } from './modules/ledger/entries.ts'
 import { entryFeed, entryMarkdown, ENTRY_KIND, type FeedData } from './modules/ledger/feed.ts'
 import {
@@ -52,19 +59,23 @@ export type Data = Snapshot<StoreRecord>['data']
 
 type Plan = ImportPlan<StoreRecord>
 
-type Section = { spec: ImportSpec; run: (raw: unknown, data: LedgerImportData, ctx: ImportContext) => Plan }
+/** Раздел импорта: получает слепок базы и сам берёт из него то, что знает его модуль. */
+type Section = { spec: ImportSpec; run: (raw: unknown, data: Data, ctx: ImportContext) => Plan }
 
 /**
- * Разделы учёта по порядку разбора: справочники раньше записей, которые на
- * них ссылаются. Порядок здесь, а не в файле импорта: файл пишет беседа,
- * и полагаться на порядок ключей в нём нельзя.
+ * Разделы по порядку разбора: справочники раньше записей, которые на них
+ * ссылаются; снимки — после счетов, которые может завести тот же файл.
+ * Порядок здесь, а не в файле импорта: файл пишет беседа, и полагаться на
+ * порядок ключей в нём нельзя.
  */
-const LEDGER: readonly Section[] = [
-  { spec: currenciesImportSpec, run: importCurrencies },
-  { spec: accountsImportSpec, run: importAccounts },
-  { spec: categoriesImportSpec, run: importCategories },
-  { spec: ratesImportSpec, run: importRates },
-  { spec: entriesImportSpec, run: importEntries },
+const SECTIONS: readonly Section[] = [
+  { spec: currenciesImportSpec, run: (raw, data, ctx) => importCurrencies(raw, ledgerData(data), ctx) },
+  { spec: accountsImportSpec, run: (raw, data, ctx) => importAccounts(raw, ledgerData(data), ctx) },
+  { spec: categoriesImportSpec, run: (raw, data, ctx) => importCategories(raw, ledgerData(data), ctx) },
+  { spec: ratesImportSpec, run: (raw, data, ctx) => importRates(raw, ledgerData(data), ctx) },
+  { spec: entriesImportSpec, run: (raw, data, ctx) => importEntries(raw, ledgerData(data), ctx) },
+  { spec: balancesImportSpec, run: (raw, data, ctx) => importBalances(raw, capitalData(data), ctx) },
+  { spec: notesImportSpec, run: (raw, data, ctx) => importNotes(raw, capitalData(data), ctx) },
 ]
 
 /** Что разделам учёта нужно из слепка базы. */
@@ -76,6 +87,16 @@ function ledgerData(data: Data): LedgerImportData {
     recurring: data.recurring,
     entries: data.entries,
     rates: data.rates,
+  }
+}
+
+/** Что разделам капитала нужно из слепка базы. */
+function capitalData(data: Data): CapitalImportData {
+  return {
+    currencies: data.currencies,
+    accounts: data.accounts,
+    balances: data.balances,
+    notes: data.notes,
   }
 }
 
@@ -143,9 +164,9 @@ export function planImport(text: string, data: Data, ctx: ImportContext): Plan {
   const results: Plan[] = []
 
   let current = data
-  for (const section of LEDGER) {
+  for (const section of SECTIONS) {
     if (!(section.spec.section in sections)) continue
-    const result = section.run(sections[section.spec.section], ledgerData(current), ctx)
+    const result = section.run(sections[section.spec.section], current, ctx)
     results.push(result)
     current = withWrites(current, result)
   }
@@ -153,7 +174,7 @@ export function planImport(text: string, data: Data, ctx: ImportContext): Plan {
   // Разделы, которых нет: молчать о них нельзя — человек мог написать
   // «operations» вместо «entries» и не понять, почему ничего не загрузилось.
   // Сверка разбирается не здесь, а после записей: ей нужно то, что они дали.
-  const known = new Set([...LEDGER.map((section) => section.spec.section), checksImportSpec.section])
+  const known = new Set([...SECTIONS.map((section) => section.spec.section), checksImportSpec.section])
   for (const section of Object.keys(sections)) {
     if (known.has(section)) continue
     results.push({
@@ -237,5 +258,5 @@ function withReplacedTotals(plan: Plan, data: Data, now: string): Plan {
 export function importPrompt(data: Data, day: DateStr): string {
   const ledger = ledgerData(data)
   const lastDays = new Map(data.accounts.map((account) => [account.id, lastDayOn(data.entries, account.id)]))
-  return importing.buildPrompt(ledgerSpecs(ledger, lastDays), day)
+  return importing.buildPrompt([...ledgerSpecs(ledger, lastDays), ...capitalSpecs(data)], day)
 }

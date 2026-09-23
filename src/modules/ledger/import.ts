@@ -77,10 +77,14 @@ export const currenciesImportSpec: ImportSpec = {
     '"code" — код: RUB, USD, USDT, BTC. Обязательно',
     '"name" — название по-русски: «Рубль», «Биткойн». Обязательно',
     '"decimals" — сколько знаков после запятой: 2 у рубля, 8 у биткойна. Не знаешь — не пиши',
+    '"unit" — единица показа, если суммы привычнее видеть в ней: {"name": "mBTC", "factor": 100000}, ' +
+      'где "factor" — сколько минимальных единиц в одной единице показа (в mBTC — 100000 сатоши). ' +
+      'Суммы в файле всё равно пиши в обычных единицах валюты. Не просили — не пиши',
   ],
   example: [
     { code: 'USD', name: 'Доллар', decimals: 2 },
     { code: 'USDT', name: 'Тезер', decimals: 4 },
+    { code: 'BTC', name: 'Биткойн', decimals: 8, unit: { name: 'mBTC', factor: 100000 } },
   ],
 }
 
@@ -109,7 +113,18 @@ export function importCurrencies(raw: unknown, data: LedgerImportData, ctx: Impo
       continue
     }
 
-    const currency = { ...createCurrency(known, { code, name, decimals }), id: ctx.newId(), updatedAt: ctx.now }
+    const unit = unitOf(record.unit)
+    if (unit === false) {
+      issues.push({
+        section,
+        title: code,
+        reason: `единица показа «${shown(record.unit)}» — нужно {"name": …, "factor": целое больше нуля}`,
+      })
+      continue
+    }
+
+    const draft = unit ? { code, name, decimals, unit } : { code, name, decimals }
+    const currency = { ...createCurrency(known, draft), id: ctx.newId(), updatedAt: ctx.now }
     known.push(currency)
     created.push(currency)
   }
@@ -120,6 +135,17 @@ export function importCurrencies(raw: unknown, data: LedgerImportData, ctx: Impo
     skipped,
     issues,
   }
+}
+
+/** Единица показа из файла: нет — `null`, кривая — `false`. */
+function unitOf(value: unknown): { name: string; factor: number } | null | false {
+  if (absent(value)) return null
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  const name = textOf(record.name)
+  const factor = numberOf(record.factor)
+  if (!name || factor === null || !Number.isInteger(factor) || factor <= 0) return false
+  return { name, factor }
 }
 
 // ─── Счета ─────────────────────────────────────────────────────────────────

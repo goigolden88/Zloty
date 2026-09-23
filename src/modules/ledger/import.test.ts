@@ -54,6 +54,21 @@ describe('валюты', () => {
     expect(plan.skipped).toBe(1)
   })
 
+  it('единица показа заводится вместе с валютой: биткойн — в mBTC (Р-04, п. 2)', () => {
+    const plan = importCurrencies(
+      [{ code: 'BTC', name: 'Биткойн', decimals: 8, unit: { name: 'mBTC', factor: 100000 } }],
+      base(),
+      context(),
+    )
+    expect(plan.writes.currencies?.[0]?.unit).toEqual({ name: 'mBTC', factor: 100000 })
+  })
+
+  it('кривая единица показа — отказ с тем, что пришло', () => {
+    const plan = importCurrencies([{ code: 'BTC', name: 'Биткойн', unit: 'mBTC' }], base(), context())
+    expect(plan.writes.currencies ?? []).toHaveLength(0)
+    expect(plan.issues[0]?.reason).toContain('единица показа «mBTC»')
+  })
+
   it('без кода запись не проходит и называется', () => {
     const plan = importCurrencies([{ name: 'Что-то' }], base(), context())
     expect(plan.writes.currencies ?? []).toHaveLength(0)
