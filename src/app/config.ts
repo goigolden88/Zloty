@@ -9,6 +9,7 @@
 
 import type { AppConfig } from '../shared/core/model.ts'
 import { entryDate, MIGRATIONS, SCHEMA_VERSION, SYNCED_STORES, V1_STORES, type StoreRecord } from './model.ts'
+import { summary } from '../summary/slice.ts'
 
 export const config: AppConfig<StoreRecord> = {
   name: 'Злотые',
@@ -115,4 +116,9 @@ export const config: AppConfig<StoreRecord> = {
     privacy: 'внутри то, сколько вы получаете и на что тратите, и остатки на счетах',
     sources: 'выписки банков, скриншоты операций и таблицы учёта',
   },
+
+  // Срез итогов для метаприложения семьи (Р-50; Я-16 ядра): проход
+  // синхронизации кладёт его в ZlotyData файлом summary.json. Только
+  // ступень 1 Я-13 — без сумм, долей и названий.
+  summary,
 }

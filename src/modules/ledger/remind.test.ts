@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Account, Category, Entry, Recurring } from '../../app/model.ts'
 import {
+  missingMonth,
   monthHasEntries,
   monthNotice,
+  monthRecords,
   RECURRING_FROM_DAY,
   recurringNotice,
   REMIND_FROM_DAY,
+  waitingRecurring,
 } from './remind.ts'
 import type { RecurringData } from './recurring.ts'
 
@@ -105,5 +108,33 @@ describe('«регулярные не внесены»', () => {
     const notice = recurringNotice(data({ recurring: two }), '2026-09-20')
     expect(notice?.title).toBe('Регулярные не внесены')
     expect(notice?.body).toContain('Связь, Интернет')
+  })
+})
+
+describe('правила напоминаний — общие со срезом итогов (Р-50)', () => {
+  it('записи месяца: операции по дате, итоги — накрывающие месяц; удалённые не считаются', () => {
+    const entries = [
+      entry({ id: 'a', date: '2026-08-10' }),
+      entry({ id: 'b', date: '2026-08-31' }),
+      entry({ id: 'c', date: '2026-08-12', deleted: true }),
+      entry({ id: 'd', date: undefined, period: { from: '2026-07-20', to: '2026-08-05' } }),
+      entry({ id: 'e', date: '2026-09-01' }),
+    ]
+    expect(monthRecords(entries, '2026-08')).toEqual({ operations: 2, totals: 1 })
+    expect(monthRecords(entries, '2026-10')).toEqual({ operations: 0, totals: 0 })
+  })
+
+  it('за какой месяц звать — тот же ответ, что у текста напоминания', () => {
+    const entries = [entry({ date: '2026-07-10' })]
+    const day = `2026-09-0${REMIND_FROM_DAY}`
+    expect(missingMonth(entries, day)).toBe('2026-08')
+    expect(monthNotice(entries, day)).not.toBeNull()
+    expect(missingMonth(entries, `2026-09-0${REMIND_FROM_DAY - 1}`)).toBeNull()
+    expect(missingMonth([], day)).toBeNull()
+  })
+
+  it('регулярные ждут — с того же числа, что и напоминание', () => {
+    expect(waitingRecurring(data(), `2026-09-${RECURRING_FROM_DAY}`)).toHaveLength(1)
+    expect(waitingRecurring(data(), `2026-09-0${RECURRING_FROM_DAY - 1}`)).toEqual([])
   })
 })

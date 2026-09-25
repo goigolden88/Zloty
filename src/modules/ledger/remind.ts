@@ -18,7 +18,7 @@
 
 import { formatMonth } from '../../shared/core/dates.ts'
 import type { Entry } from '../../app/model.ts'
-import { dueThisMonth, type RecurringData } from './recurring.ts'
+import { waitingIn, type Due, type RecurringData } from './recurring.ts'
 
 /**
  * С какого числа напоминать о прошлом месяце.
@@ -49,28 +49,58 @@ function dayNumber(day: string): number {
   return Number(day.slice(8, 10))
 }
 
+/** Сколько живых записей за месяц: операций — по дате, итогов — накрывающих его. */
+export type MonthRecords = { operations: number; totals: number }
+
+/**
+ * Записи месяца — операции с датой в нём и итоги периода, которые его
+ * накрывают хоть одним днём. Итог периода закрывает месяц, который он
+ * накрывает: вносить его второй раз не нужно (Р-12, п. 6).
+ */
+export function monthRecords(entries: readonly Entry[], month: string): MonthRecords {
+  let operations = 0
+  let totals = 0
+  for (const each of entries) {
+    if (each.deleted) continue
+    if (each.date?.startsWith(`${month}-`)) operations += 1
+    else if (each.period !== undefined && each.period.from <= `${month}-31` && `${month}-01` <= each.period.to) totals += 1
+  }
+  return { operations, totals }
+}
+
 /** Есть ли хоть одна живая запись за этот месяц — операцией или итогом. */
 export function monthHasEntries(entries: readonly Entry[], month: string): boolean {
-  return entries.some((each) => {
-    if (each.deleted) return false
-    if (each.date?.startsWith(`${month}-`)) return true
-    // Итог периода закрывает месяц, который он накрывает: вносить его
-    // второй раз не нужно (Р-12, п. 6).
-    return each.period !== undefined && each.period.from <= `${month}-31` && `${month}-01` <= each.period.to
-  })
+  const { operations, totals } = monthRecords(entries, month)
+  return operations + totals > 0
 }
 
 /**
- * «Пора внести месяц». Молчит, если месяц уже внесён, если сегодня слишком
- * рано или если записей нет вовсе — новому человеку напоминать не о чем,
- * ему показывают приветствие.
+ * За какой месяц пора звать «внести месяц» — или null. Правило одно
+ * на напоминание и на срез итогов (Р-50): второе рядом разошлось бы молча.
+ * Молчит, если месяц уже внесён, если сегодня слишком рано или если записей
+ * нет вовсе — новому человеку напоминать не о чем, ему показывают приветствие.
  */
-export function monthNotice(entries: readonly Entry[], day: string): Notice {
+export function missingMonth(entries: readonly Entry[], day: string): string | null {
   if (dayNumber(day) < REMIND_FROM_DAY) return null
   if (entries.every((each) => each.deleted)) return null
 
   const past = previousMonth(monthOf(day))
-  if (monthHasEntries(entries, past)) return null
+  return monthHasEntries(entries, past) ? null : past
+}
+
+/**
+ * Регулярные идущего месяца, о которых пора звать: ждут и ещё не внесены.
+ * Пусто — звать рано или не о чем. Правило одно на напоминание и срез (Р-50).
+ */
+export function waitingRecurring(data: RecurringData, day: string): Due[] {
+  if (dayNumber(day) < RECURRING_FROM_DAY) return []
+  return waitingIn(data, monthOf(day))
+}
+
+/** «Пора внести месяц» — текст к правилу `missingMonth`. */
+export function monthNotice(entries: readonly Entry[], day: string): Notice {
+  const past = missingMonth(entries, day)
+  if (past === null) return null
 
   return {
     title: 'Пора внести месяц',
@@ -82,11 +112,9 @@ export function monthNotice(entries: readonly Entry[], day: string): Notice {
  * «Регулярные ждут». Считает только то, чего ещё нет: внесённое молчит.
  */
 export function recurringNotice(data: RecurringData, day: string): Notice {
-  if (dayNumber(day) < RECURRING_FROM_DAY) return null
-
-  const month = monthOf(day)
-  const left = dueThisMonth(data, month).filter((each) => each.entries.length === 0)
+  const left = waitingRecurring(data, day)
   if (left.length === 0) return null
+  const month = monthOf(day)
 
   const names = left.map((each) => each.recurring.name).join(', ')
   return {

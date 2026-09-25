@@ -96,6 +96,11 @@ export function dueThisMonth(data: RecurringData, month: string): Due[] {
     })
 }
 
+/** Шаблоны этого месяца, которые ещё ничем не закрыты. */
+export function waitingIn(data: RecurringData, month: string): Due[] {
+  return dueThisMonth(data, month).filter((due) => due.entries.length === 0)
+}
+
 /**
  * Доходные регулярные, которых в этом месяце ждали и не дождались (Р-23).
  *
