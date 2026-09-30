@@ -61,6 +61,16 @@ jobs:
       # запрет на этой одноразовой машине, а не флагом --no-sandbox в коде.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # ВРЕМЕННО: диагностика запуска Chrome, убрать до слияния.
+      - name: Диагностика Chrome
+        continue-on-error: true
+        run: |
+          ls -l /usr/bin/google-chrome; google-chrome --version
+          d=$(mktemp -d)
+          timeout 20 google-chrome --headless=new --remote-debugging-port=9333 --user-data-dir=$d --no-first-run --disable-gpu about:blank &
+          for i in $(seq 1 20); do sleep 1; if curl -s http://127.0.0.1:9333/json/version; then echo; echo "порт через $i с"; break; fi; done
+          wait || true
+
       # Браузер — /usr/bin/google-chrome, он есть на ubuntu-latest.
       # Прогон сам собирает приложение.
       - run: npm run smoke
