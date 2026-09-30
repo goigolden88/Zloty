@@ -1,0 +1,70 @@
+name: Проверки PR
+
+# Ворота (Р-51): каждый PR в main проходит те же проверки, что сессия
+# делает перед пушем (06-Процесс): тесты, сборка, прогон в браузере.
+# Слить красный PR не даёт набор правил ветки main — его ставит человек
+# в настройках репо. Выкатка по-прежнему — deploy.yml на пуш в main.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Новый пуш в тот же PR отменяет недоделанную проверку прежнего.
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Тесты и сборка
+    runs-on: ubuntu-latest
+    steps:
+      # Ядро — подмодулем в src/shared: без него сборки нет.
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # ci, а не install: ставит ровно то, что в package-lock.json.
+      - run: npm ci
+
+      - run: npm test
+
+      # В build уже есть tsc --noEmit: типы проверяются и у ядра.
+      - run: npm run build
+
+  # Отдельной задачей: если прогон упадёт из-за окружения, а не кода,
+  # это видно сразу, и тесты со сборкой от него не зависят.
+  smoke:
+    name: Прогон в браузере
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Ubuntu 24.04 может не пустить Chrome в его песочницу — снимаем
+      # запрет на этой одноразовой машине, а не флагом --no-sandbox в коде.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # Прогрев: первый запуск Chrome на чистой машине — около 6 с, а прогон
+      # ждёт порт отладки 10 с. Без прогрева он падает не из-за кода.
+      - run: timeout 30 google-chrome --headless=new --disable-gpu --dump-dom about:blank > /dev/null 2>&1 || true
+
+      # Браузер — /usr/bin/google-chrome, он есть на ubuntu-latest.
+      # Прогон сам собирает приложение.
+      - run: npm run smoke
