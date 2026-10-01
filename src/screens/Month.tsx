@@ -373,15 +373,16 @@ function Report({
 function RunningNote({ running, recorded }: { running: Running | null; recorded: Recorded | null }) {
   if (running === null) return null
 
-  const { passed, elapsed, total } = running
+  const { passed, elapsed, total, going } = running
   const behind = elapsed - passed
 
   if (elapsed === 0) return <p className="basis">Месяц ещё не начался — сравнивать пока нечего.</p>
 
-  const lived =
-    elapsed < total
-      ? `Месяц ещё идёт — прошло ${elapsed} из ${total} ${plural(total, ['дня', 'дней', 'дней'])}.`
-      : `Месяц кончился, ${total} ${plural(total, ['день', 'дня', 'дней'])}.`
+  // В последний день прошли все дни, считая сегодняшний, а месяц ещё идёт.
+  const lived = going
+    ? `Месяц ещё идёт — прошло ${elapsed} из ${total} ${plural(total, ['дня', 'дней', 'дней'])}` +
+      (elapsed === total ? ', сегодня последний.' : '.')
+    : `Месяц кончился, ${total} ${plural(total, ['день', 'дня', 'дней'])}.`
 
   if (behind === 0) {
     return <p className="basis">{lived} Сравнения с обычным месяцем ниже урезаны до этого же срока.</p>

@@ -212,6 +212,12 @@ export type Running = {
   elapsed: number
   /** Всего дней в месяце. */
   total: number
+  /**
+   * Сегодня — один из дней этого месяца. В последний день прошли все его
+   * дни, считая сегодняшний, но месяц не кончился: `elapsed === total` этого
+   * не различает (Журнал 01.10.2026).
+   */
+  going: boolean
 }
 
 /**
@@ -238,7 +244,7 @@ export function monthShare(month: string, today: string, through?: string | null
   const passed = Math.min(recorded, elapsed)
 
   if (month < now && passed >= total) return null
-  return { passed, elapsed, total }
+  return { passed, elapsed, total, going: month === now }
 }
 
 /** Сколько дней месяца накрыто датой `through`. */
