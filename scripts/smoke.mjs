@@ -309,7 +309,13 @@ async function scenario(profile) {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: PIN_CLOCK })
 
   await send('Page.navigate', { url: APP })
-  await sleep(2000)
+  // Ждём приветствие, а не фиксированные секунды: на медленном сервере оно
+  // появляется позже. Не дождались за предел — проверки ниже сами сообщат,
+  // чего на экране нет.
+  await waitFor(
+    `(document.querySelector('#root')?.innerText ?? '').replace(/\u00A0/g, ' ').toLowerCase().includes('с чего начать')`,
+    20_000,
+  )
 
   const start = await screen()
   check('главный экран открылся', start.trim().length > 0, start.replace(/\s+/g, ' ').slice(0, 80))
