@@ -415,11 +415,32 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
   })
 
   it('текущий месяц знает, сколько его дней прошло', () => {
-    expect(monthShare('2026-09', '2026-09-22')).toEqual({ passed: 22, elapsed: 22, total: 30 })
+    expect(monthShare('2026-09', '2026-09-22')).toEqual({ passed: 22, elapsed: 22, total: 30, going: true })
+  })
+
+  // Тридцатого сентября прошли все тридцать дней, считая сегодняшний, но
+  // месяц ещё идёт: экран говорил «Месяц кончился» (Журнал 01.10.2026).
+  it('в последний день месяц ещё идёт, хотя прошли все его дни', () => {
+    expect(monthShare('2026-09', '2026-09-30')).toEqual({ passed: 30, elapsed: 30, total: 30, going: true })
+    expect(monthShare('2026-09', '2026-09-30', '2026-09-10')).toEqual({
+      passed: 10,
+      elapsed: 30,
+      total: 30,
+      going: true,
+    })
+  })
+
+  it('кончившийся месяц с неполными записями — уже не идёт', () => {
+    expect(monthShare('2026-09', '2026-10-01', '2026-09-10')).toEqual({
+      passed: 10,
+      elapsed: 30,
+      total: 30,
+      going: false,
+    })
   })
 
   it('месяц, который ещё не начался, прожитых дней не имеет', () => {
-    expect(monthShare('2026-10', '2026-09-22')).toEqual({ passed: 0, elapsed: 0, total: 31 })
+    expect(monthShare('2026-10', '2026-09-22')).toEqual({ passed: 0, elapsed: 0, total: 31, going: false })
   })
 
   // Календарь говорит «прошло 22», выписки доведены до 18-го. Считать надо
@@ -430,6 +451,7 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
       passed: 18,
       elapsed: 22,
       total: 30,
+      going: true,
     })
   })
 
@@ -438,6 +460,7 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
       passed: 22,
       elapsed: 22,
       total: 30,
+      going: true,
     })
   })
 
@@ -446,6 +469,7 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
       passed: 0,
       elapsed: 22,
       total: 30,
+      going: true,
     })
   })
 
@@ -456,6 +480,7 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
       passed: 18,
       elapsed: 31,
       total: 31,
+      going: false,
     })
   })
 
@@ -489,7 +514,7 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
   })
 
   it('обычное урезается до записанного срока, а не достраивается до месяца', () => {
-    expect(toDate(3000000, { passed: 15, elapsed: 22, total: 30 })).toBe(1500000)
+    expect(toDate(3000000, { passed: 15, elapsed: 22, total: 30, going: true })).toBe(1500000)
     expect(toDate(3000000, null)).toBe(3000000)
   })
 
@@ -509,7 +534,7 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
     // Полмесяца прошло — обычное к этому дню тоже половина, и трата ровно
     // в обычном темпе отклонением не считается вовсе.
     const half = overUsual(data(list), '2026-09', { today: '2026-09-15' })
-    expect(half.running).toEqual({ passed: 15, elapsed: 15, total: 30 })
+    expect(half.running).toEqual({ passed: 15, elapsed: 15, total: 30, going: true })
     expect(half.over).toEqual([])
   })
 
@@ -520,6 +545,7 @@ describe('месяц, который ещё идёт (Р-22, Р-24)', () => {
       passed: 22,
       elapsed: 22,
       total: 30,
+      going: true,
     })
   })
 })

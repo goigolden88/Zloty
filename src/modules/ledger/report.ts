@@ -106,8 +106,9 @@ function completeness(input: ReportInput, _show: Show): string[] {
   if (running === null) return []
 
   const out: string[] = []
-  if (running.elapsed < running.total) {
-    out.push(`Месяц ещё идёт: прошло ${running.elapsed} из ${running.total} ${daysOf(running.total)}.`)
+  if (running.going) {
+    const last = running.elapsed === running.total ? ', сегодня последний' : ''
+    out.push(`Месяц ещё идёт: прошло ${running.elapsed} из ${running.total} ${daysOf(running.total)}${last}.`)
   }
   if (running.passed < running.elapsed && input.recorded) {
     out.push(

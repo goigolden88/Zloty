@@ -45,6 +45,38 @@ const BROWSERS = [
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 
+/**
+ * «Сегодня» прогона — один и тот же день, а не день запуска. Данные сценария
+ * лежат в сентябре 2026, а «Месяц» открывается на текущем месяце: по
+ * настоящим часам прогон зеленел только в сентябре и краснел с первого
+ * октября (Журнал 01.10.2026). `SMOKE_TODAY` — для разбора другого дня.
+ */
+const TODAY = process.env.SMOKE_TODAY ?? '2026-09-25'
+
+/** Тот же день по-русски — как его пишет приложение. */
+const TODAY_SHOWN = TODAY.split('-').reverse().join('.')
+
+/**
+ * Часы страницы — с полудня `TODAY` и дальше идут как обычно. Ставится до
+ * загрузки приложения, на каждый документ вкладки, в том числе после
+ * перезагрузки без сети. `Date` без аргументов и `Date.now()` сдвинуты,
+ * с аргументами — как были; прототип общий, так что `instanceof` верен.
+ */
+const PIN_CLOCK = `(() => {
+  const Real = Date;
+  const [year, month, day] = ${JSON.stringify(TODAY)}.split('-').map(Number);
+  const shift = new Real(year, month - 1, day, 12).getTime() - Real.now();
+  function Pinned(...args) {
+    if (!new.target) return new Real(Real.now() + shift).toString();
+    return args.length > 0 ? new Real(...args) : new Real(Real.now() + shift);
+  }
+  Pinned.prototype = Real.prototype;
+  Pinned.now = () => Real.now() + shift;
+  Pinned.parse = Real.parse;
+  Pinned.UTC = Real.UTC;
+  globalThis.Date = Pinned;
+})();`
+
 // ─── Запуск ────────────────────────────────────────────────────────────────
 
 function findBrowser() {
@@ -274,6 +306,8 @@ async function scenario(profile) {
   // Разрешения — до первой загрузки: уже открытая страница выданное позже не видит.
   // await send('Browser.grantPermissions', { origin: new URL(APP).origin, permissions: ['notifications'] })
 
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: PIN_CLOCK })
+
   await send('Page.navigate', { url: APP })
   await sleep(2000)
 
@@ -447,6 +481,15 @@ async function scenario(profile) {
     kind.dispatchEvent(new Event('change', { bubbles: true }));
   `)
   await sleep(400)
+  // Границы — явно, с первого числа по сегодня: в них лежит расход, внесённый
+  // выше сегодняшним днём. Форма по умолчанию предлагает 1–28, и 29–31 числа
+  // итог ложился мимо операции (Журнал 01.10.2026).
+  await act(`
+    const [from, to] = document.querySelectorAll('input[type="date"]');
+    set(from, ${JSON.stringify(`${TODAY.slice(0, 7)}-01`)});
+    set(to, ${JSON.stringify(TODAY)});
+  `)
+  await sleep(300)
   await act(`
     set(document.querySelector('input[placeholder="1234,56"]'), '9000');
     byText('button', 'Записать').click();
@@ -914,7 +957,7 @@ async function scenario(profile) {
   // ── Месяц, который ещё идёт (Р-22). Прогон всегда открывается на текущем
   //    месяце, так что строка обязана быть — кроме первого дня месяца,
   //    когда прошедших дней ещё нет.
-  const firstOfMonth = new Date().getDate() === 1
+  const firstOfMonth = TODAY.endsWith('-01')
   check(
     'месяц, который ещё идёт, назван вместе с числом прожитых дней',
     firstOfMonth || /Месяц ещё идёт — прошло \d+ из \d+ дн/.test(usual),
@@ -1597,7 +1640,7 @@ async function scenario(profile) {
   await act(`byText('button', 'Записать снимок').click();`)
   await sleep(900)
   const capital2 = (await screen()).replace(/ /g, ' ')
-  const todayShown = new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const todayShown = TODAY_SHOWN
   check('снимок записан строкой на сегодня, и открыт он', has(capital2, `Капитал на ${todayShown}`), line(capital2, 'Капитал на'))
   check('площадка по новому снимку: 110 $ × 90 = 9 900 ₽', /Площадка[\s\S]{0,80}9 900,00 ₽/.test(capital2), line(capital2, '9 900'))
   check('сравнение с прошлым снимком — числом', has(capital2, 'к 01.09.2026 — было 61 000,00 ₽'), line(capital2, 'к 01.09.2026'))

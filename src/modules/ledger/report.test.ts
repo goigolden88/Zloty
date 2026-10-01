@@ -131,6 +131,15 @@ describe('отчёт месяца (Р-29)', () => {
     expect(text).not.toContain('из 30 дням')
   })
 
+  // Тридцатого сентября отчёт молчал, что месяц ещё идёт (Журнал 01.10.2026).
+  it('в последний день месяца отчёт говорит, что он ещё идёт', () => {
+    const data: MonthData = { entries: list, currencies: [RUB], rates: [], base: 'RUB' }
+    const last = monthReportText(input(list, { report: monthReport(data, '2026-09', '2026-09-30') }))
+    expect(last).toContain('Месяц ещё идёт: прошло 30 из 30 дней, сегодня последний.')
+    const after = monthReportText(input(list, { report: monthReport(data, '2026-09', '2026-10-01') }))
+    expect(after).not.toContain('Месяц ещё идёт')
+  })
+
   it('незагруженные дни названы отдельно от прожитых', () => {
     const data: MonthData = { entries: list, currencies: [RUB], rates: [], base: 'RUB' }
     const text = monthReportText(
