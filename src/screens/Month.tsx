@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CHANGES } from '../changes.ts'
-import type { Account } from '../app/model.ts'
+import { db } from '../app/core.ts'
+import type { Account, SpecialPeriod } from '../app/model.ts'
 import { SYNCED_STORES } from '../app/model.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
 import { recordedThrough, type Recorded } from '../modules/ledger/entries.ts'
@@ -11,14 +12,17 @@ import { monthReportText } from '../modules/ledger/report.ts'
 import { type DebtsData } from '../modules/debts/summary.ts'
 import { useDebts } from '../modules/debts/useDebts.ts'
 import { debtsForReport } from '../summary/debts-report.ts'
-import { ownShares } from '../summary/shares.ts'
+import { monthData } from '../summary/month-data.ts'
 import { incomeNotEntered, type RecurringData } from '../modules/ledger/recurring.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useRates } from '../modules/ledger/useRates.ts'
+import { useSpecials } from '../modules/ledger/useSpecials.ts'
+import { createSpecial, specialProblem, specialTitle, updateSpecial } from '../modules/ledger/specials.ts'
 import {
   monthlyExpenses,
   monthReport,
+  monthSpecials,
   observations,
   growthByCategory,
   growthOf,
@@ -35,6 +39,7 @@ import {
   type CategoryGrowth,
   type Growth,
   type MonthReport,
+  type MonthSpecials,
   type Observation,
   type OverUsualReport,
   type Running,
@@ -44,6 +49,7 @@ import {
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
 import { addMonths, formatDate, formatMonth, MONTHS_SHORT, monthOf, plural, today } from '../shared/core/dates.ts'
 import { BarChart, type BarItem } from '../shared/ui/BarChart.tsx'
+import { Fold } from '../shared/ui/Fold.tsx'
 import { WhatsNew } from '../shared/screens/WhatsNew.tsx'
 import { useFirstRun } from '../shared/screens/useFirstRun.ts'
 import { useWhatsNew } from '../shared/screens/useWhatsNew.ts'
@@ -69,11 +75,18 @@ export function Month() {
   const entries = useEntries()
   const rates = useRates()
   const debts = useDebts()
+  const specials = useSpecials()
   const [month, setMonth] = useState(() => monthOf(today()))
 
   if (whatsNew.show.length > 0) return <WhatsNew changes={whatsNew.show} onDone={whatsNew.dismiss} />
 
-  const busy = ledger.status === 'loading' || entries.status === 'loading' || rates.status === 'loading'
+  // Без периодов особый расход посчитался бы только по флагу (Р-55):
+  // число вышло бы уверенным и другим, поэтому их ждут, как и записи.
+  const busy =
+    ledger.status === 'loading' ||
+    entries.status === 'loading' ||
+    rates.status === 'loading' ||
+    specials.status === 'loading'
   const profile = readProfile(ledger.data.profile)
 
   // Валюта итогов: из настроек, а если их нет — первая заведённая (Р-41).
@@ -132,15 +145,16 @@ export function Month() {
           <Report
             month={month}
             onMonth={setMonth}
-            data={{
+            // Доли связанных операций (Р-31) и особые периоды (Р-55)
+            // сводит сводка: учёт про комнаты не знает.
+            data={monthData({
               entries: entries.all,
               currencies: ledger.data.currencies,
               rates: rates.all,
               base: currency.code,
-              // Связанная операция входит в поток долей, а не суммой (Р-31).
-              // Считает долю сводка: учёт про комнаты не знает.
-              shares: ownShares(entries.all, debts.data).amounts,
-            }}
+              debts: debts.data,
+              specials: specials.all,
+            })}
             goal={profile?.savingsGoal ?? null}
             names={new Map(ledger.data.categories.map((each) => [each.id, each.name]))}
             waiting={{
@@ -196,6 +210,7 @@ function Report({
   const byCategory = growthByCategory(data, month, { without: rare })
   const over = overUsual(data, month, { today: now, through: recorded?.day ?? null })
   const bars = monthlyExpenses(data, month, BARS)
+  const specials = monthSpecials(data, month)
 
   const show = (amount: number) =>
     formatMoney({ amount, currency: data.base }, findCurrency(data.currencies, data.base))
@@ -264,13 +279,7 @@ function Report({
             </div>
             <div>{spent(report, report.usualExpense.amount, show)}</div>
           </li>
-          <li className="line">
-            <div className="line__main">
-              Расход особый
-              <div className="basis">в обычный месяц не идёт</div>
-            </div>
-            <div>{spent(report, report.specialExpense.amount, show)}</div>
-          </li>
+          <SpecialLine report={report} parts={specials} show={show} />
         </ul>
         <p className="basis">
           {report.expense.entries === 0 && report.savedProblem === 'covered'
@@ -282,6 +291,8 @@ function Report({
         <MissingNote list={[...report.income.missing, ...report.expense.missing]} />
         <PeriodsNote report={report} show={show} />
       </div>
+
+      <SpecialsBlock list={data.specials ?? []} month={month} />
 
       <div className="block">
         <h2>Обычный месяц</h2>
@@ -498,6 +509,244 @@ function ThisMonth({
       за {running.passed} {plural(running.passed, ['день', 'дня', 'дней'])} месяца — {show(now)},
       а обычно за такой же срок — {show(against)}: {word} на {delta}
     </p>
+  )
+}
+
+/**
+ * «Расход особый» — и из чего он сложился (Р-55).
+ *
+ * Строка раскрывается: каждый особый период, задевший месяц, — название,
+ * полные даты, сумма его трат в этом месяце и число операций; отдельно —
+ * особые по пометке траты вне периодов. Суммы — расчёта (`monthSpecials`):
+ * экран их не складывает, а части вместе дают ровно особый расход строки.
+ */
+function SpecialLine({
+  report,
+  parts,
+  show,
+}: {
+  report: MonthReport
+  parts: MonthSpecials
+  show: (amount: number) => string
+}) {
+  const [open, setOpen] = useState(false)
+  const count = parts.periods.length
+
+  return (
+    <>
+      <li className="line">
+        <div className="line__main">
+          Расход особый
+          <div className="basis">
+            в обычный месяц не идёт
+            {count > 0 &&
+              ` · ${count} ${plural(count, ['особый период', 'особых периода', 'особых периодов'])} в этом месяце`}
+          </div>
+        </div>
+        <div className="row">
+          <div>{spent(report, report.specialExpense.amount, show)}</div>
+          <button type="button" aria-expanded={open} onClick={() => setOpen((was) => !was)}>
+            {open ? 'Свернуть' : 'Из чего'}
+          </button>
+        </div>
+      </li>
+      {open && (
+        <li className="panel">
+          <ul className="plain">
+            {parts.periods.map((each) => (
+              <li key={each.period.id} className="line">
+                <div className="line__main">
+                  {specialTitle(each.period)}
+                  <div className="basis">
+                    {formatDate(each.period.from)} — {formatDate(each.period.to)} · {inMonth(each.sum)}
+                  </div>
+                </div>
+                <div>{show(each.sum.amount)}</div>
+              </li>
+            ))}
+            <li className="line">
+              <div className="line__main">
+                Вне периодов
+                <div className="basis">с пометкой «особая» · {inMonth(parts.outside)}</div>
+              </div>
+              <div>{show(parts.outside.amount)}</div>
+            </li>
+          </ul>
+          {count === 0 && (
+            <p className="basis">
+              особых периодов в этом месяце нет — их заводят в блоке «Особые периоды» ниже
+            </p>
+          )}
+        </li>
+      )}
+    </>
+  )
+}
+
+/** «в этом месяце — по 3 операциям»: период через границу месяцев считается здесь своей частью. */
+function inMonth(sum: Sum): string {
+  if (sum.entries === 0 && sum.missing.length === 0) return 'в этом месяце трат нет'
+  return `в этом месяце — по ${sum.entries} ${plural(sum.entries, ['операции', 'операциям', 'операциям'])}`
+}
+
+/**
+ * «Особые периоды» (Р-55): поездка, отпуск — заводятся, правятся
+ * и удаляются здесь.
+ *
+ * Расход с датой внутри периода особый сам — и загруженный, и тот, что
+ * придёт выпиской после поездки. Регулярные в эти дни остаются обычными.
+ * Правила формы — `specialProblem`: пересекающийся период и последний
+ * день раньше первого не записываются, и форма говорит почему.
+ */
+function SpecialsBlock({ list, month }: { list: readonly SpecialPeriod[]; month: string }) {
+  const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
+  // Свежие сверху: правят обычно последнюю поездку.
+  const shown = [...list].reverse()
+
+  return (
+    <Fold
+      id="month:specials"
+      title="Особые периоды"
+      summary={<span className="muted">{list.length === 0 ? 'нет' : list.length}</span>}
+    >
+      <p className="basis">
+        поездка, отпуск — дни, когда тратится больше обычного. Расход с датой внутри периода особый сам и
+        в обычный месяц не идёт; регулярные платежи в эти дни, итоги за период и доходы остаются как были
+      </p>
+      {list.length === 0 && !adding && <p className="muted">Особых периодов пока нет.</p>}
+      {shown.length > 0 && (
+        <ul className="plain">
+          {shown.map((each) =>
+            editing === each.id ? (
+              <li key={each.id}>
+                <SpecialForm record={each} list={list} month={month} onDone={() => setEditing(null)} />
+              </li>
+            ) : (
+              <SpecialPeriodLine
+                key={each.id}
+                period={each}
+                onEdit={() => {
+                  setAdding(false)
+                  setEditing(each.id)
+                }}
+              />
+            ),
+          )}
+        </ul>
+      )}
+      {adding ? (
+        <SpecialForm record={null} list={list} month={month} onDone={() => setAdding(false)} />
+      ) : (
+        <div className="row">
+          <button
+            type="button"
+            onClick={() => {
+              setEditing(null)
+              setAdding(true)
+            }}
+          >
+            + Особый период
+          </button>
+        </div>
+      )}
+    </Fold>
+  )
+}
+
+function SpecialPeriodLine({ period, onEdit }: { period: SpecialPeriod; onEdit: () => void }) {
+  const [sure, setSure] = useState(false)
+
+  return (
+    <li className="line">
+      <div className="line__main">
+        {specialTitle(period)}
+        <div className="basis">
+          {formatDate(period.from)} — {formatDate(period.to)}
+          {sure && ' · удалить — и траты этих дней снова станут обычными'}
+        </div>
+      </div>
+      <div className="row row--wrap">
+        <button type="button" onClick={onEdit}>
+          Изменить
+        </button>
+        {sure ? (
+          <>
+            <button type="button" className="btn--danger" onClick={() => void db.remove('specials', period.id)}>
+              Точно удалить
+            </button>
+            <button type="button" onClick={() => setSure(false)}>
+              Оставить
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={() => setSure(true)}>
+            Удалить
+          </button>
+        )}
+      </div>
+    </li>
+  )
+}
+
+/** Форма периода: с, по, название. Новый период — от сегодня, если месяц текущий, иначе от первого числа. */
+function SpecialForm({
+  record,
+  list,
+  month,
+  onDone,
+}: {
+  /** Период, который правят. Null — заводят новый. */
+  record: SpecialPeriod | null
+  list: readonly SpecialPeriod[]
+  month: string
+  onDone: () => void
+}) {
+  const start = monthOf(today()) === month ? today() : `${month}-01`
+  const [from, setFrom] = useState(record?.from ?? start)
+  const [to, setTo] = useState(record?.to ?? start)
+  const [title, setTitle] = useState(record?.title ?? '')
+  const [error, setError] = useState('')
+
+  async function save() {
+    const draft = { from, to, title }
+    const problem = specialProblem(draft, list, record?.id)
+    if (problem) return setError(`Не сохраняется: ${problem}.`)
+    setError('')
+    await db.put('specials', record ? updateSpecial(record, draft) : createSpecial(draft))
+    onDone()
+  }
+
+  return (
+    <div className="form">
+      <div className="row row--wrap">
+        <label className="field">
+          С
+          <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
+        </label>
+        <label className="field">
+          по
+          <input type="date" value={to} onChange={(event) => setTo(event.target.value)} />
+        </label>
+      </div>
+      <label className="field">
+        Название — если хочется
+        <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Поездка в горы" />
+      </label>
+      <p className="muted">
+        Траты с датой внутри периода станут особыми сами — и уже внесённые, и те, что придут выпиской позже.
+        Отдельную трату из периода исключить нельзя.
+      </p>
+      {error && <p className="error">{error}</p>}
+      <div className="form__actions">
+        <button type="button" onClick={onDone}>
+          Отмена
+        </button>
+        <button type="button" className="btn--primary" onClick={() => void save()}>
+          {record ? 'Сохранить' : 'Записать'}
+        </button>
+      </div>
+    </div>
   )
 }
 

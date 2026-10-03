@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
-import type { Category, Entry } from '../app/model.ts'
+import type { Category, Entry, SpecialPeriod } from '../app/model.ts'
 import { active, activeCategories } from '../modules/ledger/ledger.ts'
 import {
   draftOf,
@@ -15,8 +15,10 @@ import { dueThisMonth, enterAll, enterRecurring, leftToPay, type Due } from '../
 import { type DebtsData } from '../modules/debts/summary.ts'
 import { useDebts } from '../modules/debts/useDebts.ts'
 import { linkChoices, linkNote } from '../summary/links.ts'
+import { specialNote } from '../modules/ledger/feed.ts'
 import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
+import { useSpecials } from '../modules/ledger/useSpecials.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
 import { addMonths, formatDate, formatMonth, monthOf, nowIso, today } from '../shared/core/dates.ts'
 import { feedDateText, feedHeading, filterFeed, groupFeed, recordsText } from '../shared/core/feed.ts'
@@ -36,6 +38,7 @@ export function Entries() {
   const ledger = useLedger()
   const entries = useEntries()
   const debts = useDebts()
+  const specials = useSpecials()
   const [month, setMonth] = useState(() => monthOf(today()))
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Entry | null>(null)
@@ -148,6 +151,7 @@ export function Entries() {
                       entry={entry}
                       ledger={ledger.data}
                       debts={debts.data}
+                      specials={specials.all}
                       onEdit={setEditing}
                     />
                   ))}
@@ -435,17 +439,21 @@ function EntryLine({
   entry,
   ledger,
   debts,
+  specials,
   onEdit,
 }: {
   entry: Entry
   ledger: LedgerData
   debts: DebtsData
+  specials: readonly SpecialPeriod[]
   onEdit: (entry: Entry) => void
 }) {
   const [asking, setAsking] = useState(false)
   const [linking, setLinking] = useState(false)
   const category = categoryName(ledger, entry.categoryId)
   const link = linkNote(entry, debts, ledger.currencies)
+  // Трата периода называет его (Р-55): особая она не флагом, а датой.
+  const special = specialNote(entry, specials)
 
   return (
     <li className="line">
@@ -457,7 +465,7 @@ function EntryLine({
           {entry.time && ` ${entry.time}`} · {accountName(ledger, entry.accountId)}
           {entry.toAccountId && ` → ${accountName(ledger, entry.toAccountId)}`}
           {entry.kind === 'transfer' && !entry.toAccountId && ' → второй счёт не указан'}
-          {entry.special && ' · особая'}
+          {special && ` · ${special}`}
           {entry.for && ` · за ${formatMonth(entry.for)}`}
         </div>
         {entry.note && <div className="muted">{entry.note}</div>}

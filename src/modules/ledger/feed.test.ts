@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { Account, Category, Currency, Entry } from '../../app/model.ts'
+import type { Account, Category, Currency, Entry, SpecialPeriod } from '../../app/model.ts'
 import { filterFeed, groupFeed } from '../../shared/core/feed.ts'
-import { entryFeed, entryMarkdown, ENTRY_KIND, type FeedData } from './feed.ts'
+import { entryFeed, entryMarkdown, ENTRY_KIND, specialNote, type FeedData } from './feed.ts'
+import { SPECIAL_UNTITLED } from './specials.ts'
 
 /** Описания и суммы выдуманы: код публичный (CLAUDE.md, «Личные данные»). */
 const AT = '2026-09-20T10:00:00.000Z'
@@ -63,6 +64,35 @@ describe('строки ленты', () => {
   it('удалённый счёт не роняет строку, а называется', () => {
     const orphan = entry({ accountId: 'нет такого' })
     expect(entryFeed(data([orphan]))[0]?.detail).toContain('счёт удалён')
+  })
+})
+
+describe('подпись «особая» (Р-55)', () => {
+  const trip: SpecialPeriod = { id: 'p', updatedAt: AT, from: '2026-09-10', to: '2026-09-15', title: 'Поездка к морю' }
+
+  it('у траты периода — «особая · <название>», по периоду, без флага', () => {
+    const [item] = entryFeed({ ...data([entry()]), specials: [trip] })
+    expect(item?.detail).toContain('особая · Поездка к морю')
+  })
+
+  it('период без названия называется общим словом', () => {
+    const untitled: SpecialPeriod = { id: 'p', updatedAt: AT, from: trip.from, to: trip.to }
+    expect(specialNote(entry(), [untitled])).toBe(`особая · ${SPECIAL_UNTITLED}`)
+  })
+
+  it('трата с флагом вне периодов — просто «особая»', () => {
+    expect(specialNote(entry({ special: true }), [])).toBe('особая')
+    expect(specialNote(entry({ special: true, date: '2026-08-01' }), [trip])).toBe('особая')
+  })
+
+  it('регулярная, доход и удалённый период — не особые по периоду', () => {
+    expect(specialNote(entry({ recurringId: 'rent' }), [trip])).toBeNull()
+    expect(specialNote(entry({ kind: 'income' }), [trip])).toBeNull()
+    expect(specialNote(entry(), [{ ...trip, deleted: true }])).toBeNull()
+  })
+
+  it('без периодов в данных подпись — по флагу, как прежде', () => {
+    expect(entryFeed(data([entry()]))[0]?.detail).not.toContain('особая')
   })
 })
 
