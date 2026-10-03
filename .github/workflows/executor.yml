@@ -1,0 +1,31 @@
+name: Исполнитель
+
+# Конвейер «Штаб»: владелец ставит на issue метку «готово» — исполнитель
+# берёт задачу и доводит её до PR. Сам исполнитель общий для проектов —
+# в goigolden88/Skills_Claude (Ш-33 Штаба); здесь — когда и с чем его звать.
+# Сливает только человек. Остановить — Actions → «Исполнитель» → Disable workflow.
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  executor:
+    # Только «готово» и только от владельца: метки, которые ставит сам
+    # исполнитель, запуска не дают.
+    if: github.event.label.name == 'готово' && github.event.sender.login == github.repository_owner
+    # Один исполнитель на репо; следующая задача ждёт, а не отменяет.
+    concurrency:
+      group: executor
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: goigolden88/Skills_Claude/.github/workflows/executor.yml@main
+    with:
+      node-version: "24"
+      chrome: true
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
