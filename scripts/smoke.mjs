@@ -859,6 +859,89 @@ async function scenario(profile) {
     line(month, 'прошлых месяцев с операциями'),
   )
 
+  // ── Особые периоды (Р-55): заводятся на «Месяце», трата с датой внутри
+  //    становится особой сама — без пометки. Период — на день загруженной
+  //    операции 120,50; в конце он удаляется, чтобы не менять проверок ниже.
+  const specialForm = `startsWith('label', 'Название — если хочется').closest('.form')`
+  const fillSpecial = (from, to, title) => `
+    const form = ${specialForm};
+    const [from, to] = form.querySelectorAll('input[type="date"]');
+    set(from, ${JSON.stringify(from)});
+    set(to, ${JSON.stringify(to)});
+    set(startsWith('label', 'Название — если хочется').querySelector('input'), ${JSON.stringify(title)});
+  `
+  check('на «Месяце» есть блок «Особые периоды»', has(month, 'Особых периодов пока нет'), line(month, 'Особых периодов'))
+  await act(`byText('button', '+ Особый период').click();`)
+  await sleep(400)
+  await act(fillSpecial('2026-09-18', '2026-09-18', 'Прогон: поездка'))
+  await sleep(300)
+  await act(`${specialForm}.querySelector('.btn--primary').click();`)
+  await sleep(700)
+  await act(`byText('button', 'Из чего').click();`)
+  await sleep(400)
+  const withSpecial = await screen()
+  check('период завёлся и виден в блоке', has(withSpecial, 'Прогон: поездка'), line(withSpecial, 'Прогон: поездка'))
+  check(
+    'особый расход раскрылся по периоду: даты, число операций',
+    has(withSpecial, '18.09.2026 — 18.09.2026 · в этом месяце — по 1 операции'),
+    line(withSpecial, 'в этом месяце'),
+  )
+  check(
+    'трата периода ушла в особый расход без пометки — суммой',
+    /Прогон: поездка\s*\n[^\n]*в этом месяце[^\n]*\n\s*120,50/.test(withSpecial.replace(/ /g, ' ')),
+    line(withSpecial, '120,50'),
+  )
+  check('и отдельной строкой — особые вне периодов', has(withSpecial, 'Вне периодов'), line(withSpecial, 'Вне периодов'))
+
+  // Пересекающийся период не записывается, и задетый назван.
+  await act(`byText('button', '+ Особый период').click();`)
+  await sleep(400)
+  await act(fillSpecial('2026-09-17', '2026-09-19', 'Прогон: второй'))
+  await sleep(300)
+  await act(`${specialForm}.querySelector('.btn--primary').click();`)
+  await sleep(500)
+  const overlap = await screen()
+  check(
+    'пересекающийся период не сохраняется, задетый назван',
+    has(overlap, 'Не сохраняется: задевает «Прогон: поездка» 18.09.2026 — 18.09.2026'),
+    line(overlap, 'Не сохраняется'),
+  )
+  await act(fillSpecial('2026-09-20', '2026-09-19', 'Прогон: второй'))
+  await sleep(300)
+  await act(`${specialForm}.querySelector('.btn--primary').click();`)
+  await sleep(500)
+  const backwards = await screen()
+  check(
+    'последний день раньше первого — тоже отказ словами',
+    has(backwards, 'Не сохраняется: последний день раньше первого'),
+    line(backwards, 'Не сохраняется'),
+  )
+  await act(`${specialForm}.querySelector('button:not(.btn--primary)').click();`)
+  await sleep(400)
+
+  await go('/entries')
+  const tripEntries = await screen()
+  check(
+    'в «Операциях» у траты периода — «особая» и название',
+    has(tripEntries, 'особая · Прогон: поездка'),
+    line(tripEntries, 'особая ·'),
+  )
+
+  await go('/')
+  await act(`
+    const row = startsWith('.line', 'Прогон: поездка');
+    [...row.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Удалить').click();
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Точно удалить').click();`)
+  await sleep(700)
+  const noSpecial = await screen()
+  check(
+    'период удалился — траты снова обычные',
+    has(noSpecial, 'Особых периодов пока нет') && !has(noSpecial, 'Прогон: поездка'),
+    line(noSpecial, 'Особых периодов'),
+  )
+
   // Месяц, расход которого записан периодом: ноль тут читался бы как
   // «не тратил», хотя правда — «записан иначе» (Р-07).
   await act(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '←').click();`)
