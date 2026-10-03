@@ -8,12 +8,15 @@ import { config } from './config.ts'
 import {
   DEBT_STORES,
   NOTE_STORES,
+  SPECIAL_STORES,
   entryDate,
   SCHEMA_VERSION,
   SYNCED_STORES,
   V1_STORES,
   type Entry,
+  type Note,
   type Person,
+  type SpecialPeriod,
   type StoreRecord,
 } from './model.ts'
 
@@ -64,10 +67,10 @@ describe('то, что не меняется после первого рели�
     expect([...config.v1Stores]).toEqual([...V1_STORES])
   })
 
-  it('долги и заметки дописаны к хранилищам, а не в раскладку версии 1', () => {
-    expect([...config.stores]).toEqual([...V1_STORES, ...DEBT_STORES, ...NOTE_STORES])
-    expect([...config.stores]).toHaveLength(16)
-    for (const store of [...DEBT_STORES, ...NOTE_STORES]) {
+  it('долги, заметки и особые периоды дописаны к хранилищам, а не в раскладку версии 1', () => {
+    expect([...config.stores]).toEqual([...V1_STORES, ...DEBT_STORES, ...NOTE_STORES, ...SPECIAL_STORES])
+    expect([...config.stores]).toHaveLength(17)
+    for (const store of [...DEBT_STORES, ...NOTE_STORES, ...SPECIAL_STORES]) {
       expect(V1_STORES as readonly string[]).not.toContain(store)
     }
   })
@@ -87,21 +90,34 @@ describe('то, что не меняется после первого рели�
   })
 })
 
-describe('миграции: версия 2 — долги (Р-30), версия 3 — заметки (Р-36)', () => {
-  it('версия схемы 3, шагов два, оба только добавляют', () => {
-    expect(config.schemaVersion).toBe(3)
-    expect(SCHEMA_VERSION).toBe(3)
-    expect(config.migrations.map((step) => step.to)).toEqual([2, 3])
+describe('миграции: версия 2 — долги (Р-30), 3 — заметки (Р-36), 4 — особые периоды (Р-55)', () => {
+  it('версия схемы 4, шагов три, все только добавляют', () => {
+    expect(config.schemaVersion).toBe(4)
+    expect(SCHEMA_VERSION).toBe(4)
+    expect(config.migrations.map((step) => step.to)).toEqual([2, 3, 4])
     expect(config.migrations.every((step) => step.additive === true)).toBe(true)
   })
 
-  it('свежая база доезжает до версии 3: все шестнадцать хранилищ есть и пусты', async () => {
+  it('свежая база доезжает до версии 4: все семнадцать хранилищ есть и пусты', async () => {
     for (const store of config.stores) {
       expect(await db.count(store)).toBe(0)
     }
   })
 
-  it('база версии 1 с записями открывается версией 3: учёт цел, хранилища долгов и заметок пусты', async () => {
+  it('свежая база принимает особый период: хранилище specials заведено', async () => {
+    const trip: SpecialPeriod = {
+      id: '01J000000000000000000007',
+      updatedAt: '2026-10-03T10:00:00.000Z',
+      from: '2026-07-10',
+      to: '2026-07-20',
+      title: 'Поездка',
+    }
+    await db.put('specials', trip)
+    // `put` ставит своё время правки — сравнивается всё, кроме него.
+    expect(await db.getAll('specials')).toEqual([{ ...trip, updatedAt: expect.any(String) }])
+  })
+
+  it('база версии 1 с записями открывается версией 4: учёт цел, новые хранилища пусты', async () => {
     const operation: Entry = {
       id: '01J000000000000000000001',
       updatedAt: '2026-09-20T10:00:00.000Z',
@@ -115,12 +131,12 @@ describe('миграции: версия 2 — долги (Р-30), версия 
     expect(skipped).toEqual([])
 
     expect(await db.getAll('entries')).toEqual([operation])
-    for (const store of [...DEBT_STORES, ...NOTE_STORES]) {
+    for (const store of [...DEBT_STORES, ...NOTE_STORES, ...SPECIAL_STORES]) {
       expect(await db.count(store)).toBe(0)
     }
   })
 
-  it('база версии 2 с долгами открывается версией 3: долги целы, заметок нет', async () => {
+  it('база версии 2 с долгами открывается версией 4: долги целы, заметок и периодов нет', async () => {
     const person: Person = { id: '01J000000000000000000002', updatedAt: '2026-09-20T10:00:00.000Z', name: 'Петя' }
 
     const skipped = await db.createLegacyBase(2, { people: [person] })
@@ -128,12 +144,50 @@ describe('миграции: версия 2 — долги (Р-30), версия 
 
     expect(await db.getAll('people')).toEqual([person])
     expect(await db.count('notes')).toBe(0)
+    expect(await db.count('specials')).toBe(0)
   })
 
-  it('слепок, выгруженный на версиях 1 и 2, приложение принимает: шаги только добавляют', () => {
+  it('база версии 3 с записями открывается версией 4: записи на месте, флаг особой цел, specials пусто', async () => {
+    const odd: Entry = {
+      id: '01J000000000000000000008',
+      updatedAt: '2026-09-20T10:00:00.000Z',
+      kind: 'expense',
+      accountId: 'account-1',
+      money: { amount: 900000, currency: 'RUB' },
+      date: '2026-08-14',
+      special: true,
+    }
+    const usual: Entry = {
+      id: '01J000000000000000000009',
+      updatedAt: '2026-09-20T10:00:00.000Z',
+      kind: 'expense',
+      accountId: 'account-1',
+      money: { amount: 12300, currency: 'RUB' },
+      date: '2026-08-15',
+    }
+    const person: Person = { id: '01J000000000000000000002', updatedAt: '2026-09-20T10:00:00.000Z', name: 'Петя' }
+    const note: Note = {
+      id: '01J000000000000000000005',
+      updatedAt: '2026-09-22T10:00:00.000Z',
+      about: 'capital',
+      date: '2026-03-02',
+      text: 'просадка',
+    }
+
+    const skipped = await db.createLegacyBase(3, { entries: [odd, usual], people: [person], notes: [note] })
+    expect(skipped).toEqual([])
+
+    expect(await db.getAll('entries')).toEqual([odd, usual])
+    expect(await db.getAll('people')).toEqual([person])
+    expect(await db.getAll('notes')).toEqual([note])
+    expect(await db.count('specials')).toBe(0)
+  })
+
+  it('слепок, выгруженный на версиях 1–3, приложение принимает: шаги только добавляют', () => {
     expect(() => db.checkSnapshotVersion(1)).not.toThrow()
     expect(() => db.checkSnapshotVersion(2)).not.toThrow()
     expect(() => db.checkSnapshotVersion(3)).not.toThrow()
+    expect(() => db.checkSnapshotVersion(4)).not.toThrow()
   })
 })
 
@@ -152,8 +206,8 @@ describe('индексы — те, по которым идут выборки',
     expect([...config.indexes.recurring]).toEqual([])
   })
 
-  it('долгам и заметкам индексов не заводили: читать по ним ядро всё равно не умеет', () => {
-    for (const store of [...DEBT_STORES, ...NOTE_STORES]) {
+  it('долгам, заметкам и особым периодам индексов не заводили: читать по ним ядро всё равно не умеет', () => {
+    for (const store of [...DEBT_STORES, ...NOTE_STORES, ...SPECIAL_STORES]) {
       expect([...config.indexes[store]]).toEqual([])
     }
   })
@@ -212,6 +266,15 @@ describe('раскладка по файлам', () => {
       notes: [{ id: '01J000000000000000000005', updatedAt: '2026-09-22T10:00:00.000Z', about: 'capital', date: '2026-03-02', text: 'просадка' }],
     })
     expect(files.map((file) => file.path)).toContain('notes/2026-03.json')
+  })
+
+  it('особые периоды — одним файлом specials.json (Р-55)', () => {
+    expect(config.places.specials).toEqual({ split: 'none', path: 'specials.json' })
+    const files = layout.buildFiles({
+      ...empty(),
+      specials: [{ id: '01J000000000000000000007', updatedAt: '2026-10-03T10:00:00.000Z', from: '2026-07-10', to: '2026-07-20' }],
+    })
+    expect(files.map((file) => file.path)).toContain('specials.json')
   })
 
   it('трата события ложится в месяц своей даты, а не даты события', () => {

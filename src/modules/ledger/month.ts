@@ -18,12 +18,14 @@
  *   промежутки между собой.
  * — **Перевод между своими счетами — не расход и не доход** (Р-12, п. 3):
  *   в итоги он не входит никогда.
- * — **Обычный месяц — без особых трат** (Р-05, Р-07).
+ * — **Обычный месяц — без особых трат** (Р-05, Р-07). Особая — по флагу
+ *   или по особому периоду, одной функцией `isSpecial` (Р-55).
  */
 
 import { daysBetween, formatMonth, lastDayOf, monthOf, periodDays } from '../../shared/core/dates.ts'
-import type { Currency, Entry, Money, Rate } from '../../app/model.ts'
+import type { Currency, Entry, Money, Rate, SpecialPeriod } from '../../app/model.ts'
 import { convert } from '../money/rates.ts'
+import { isSpecial, liveSpecials, specialPeriodOf } from './specials.ts'
 
 /** Сколько прошлых месяцев берёт «обычный месяц». Число видно в основании и в справке. */
 export const USUAL_MONTHS = 6
@@ -85,6 +87,16 @@ export type MonthData = {
    * по-прежнему ничего не знает про комнаты.
    */
   shares?: ReadonlyMap<string, Money>
+  /**
+   * Особые периоды трат (Р-55): расход с датой внутри них — особый.
+   * Нет — особые только по флагу.
+   */
+  specials?: readonly SpecialPeriod[]
+}
+
+/** Особая ли трата — по флагу или по периоду данных (Р-55). */
+function special(entry: Entry, data: MonthData): boolean {
+  return isSpecial(entry, data.specials)
 }
 
 function decimalsOf(currencies: readonly Currency[], code: string): number | null {
@@ -325,8 +337,8 @@ export function monthReport(
   const income = sumOf(operations.filter((each) => each.kind === 'income'), data)
   const expenses = operations.filter((each) => each.kind === 'expense')
   const expense = sumOf(expenses, data)
-  const usualExpense = sumOf(expenses.filter((each) => !each.special), data)
-  const specialExpense = sumOf(expenses.filter((each) => each.special === true), data)
+  const usualExpense = sumOf(expenses.filter((each) => !special(each, data)), data)
+  const specialExpense = sumOf(expenses.filter((each) => special(each, data)), data)
 
   const periodTotals = totalsTouching(data.entries, month)
 
@@ -361,7 +373,53 @@ export function monthReport(
     coveredDays,
     monthDays,
     running,
-    spanExpense: sumOf(within(expenses.filter((each) => !each.special), spanEnd(month, running)), data),
+    spanExpense: sumOf(within(expenses.filter((each) => !special(each, data)), spanEnd(month, running)), data),
+  }
+}
+
+// ─── Особый расход месяца по периодам ──────────────────────────────────────
+
+/** Особый период, задевший месяц, и его траты в этом месяце (Р-55). */
+export type MonthSpecial = {
+  period: SpecialPeriod
+  /** Траты периода, пришедшиеся на этот месяц: сумма и число операций. */
+  sum: Sum
+}
+
+/** Особый расход месяца, разложенный по периодам (Р-55). */
+export type MonthSpecials = {
+  /** Периоды, задевшие месяц, от ранних к поздним — и с нулём трат тоже. */
+  periods: MonthSpecial[]
+  /** Особые по флагу траты вне периодов. */
+  outside: Sum
+}
+
+/**
+ * Из чего сложился особый расход месяца (Р-55).
+ *
+ * Период через границу месяцев — у каждого месяца своя часть: берутся
+ * только операции этого месяца. Трата с флагом внутри периода — трата
+ * периода, а не «вне периодов»: дважды она не считается, и части вместе
+ * дают ровно `specialExpense` отчёта месяца.
+ */
+export function monthSpecials(data: MonthData, month: string): MonthSpecials {
+  const first = `${month}-01`
+  const last = lastDayOf(month)
+  const touching = liveSpecials(data.specials ?? []).filter((each) => each.from <= last && first <= each.to)
+
+  const expenses = operationsOf(data.entries, month).filter((each) => each.kind === 'expense')
+  const byPeriod = new Map<string, Entry[]>()
+  const outside: Entry[] = []
+
+  for (const entry of expenses) {
+    const period = specialPeriodOf(entry, data.specials)
+    if (period) byPeriod.set(period.id, [...(byPeriod.get(period.id) ?? []), entry])
+    else if (entry.special === true) outside.push(entry)
+  }
+
+  return {
+    periods: touching.map((period) => ({ period, sum: sumOf(byPeriod.get(period.id) ?? [], data) })),
+    outside: sumOf(outside, data),
   }
 }
 
@@ -449,7 +507,7 @@ export function observations(
     // наблюдение (Р-20). Считать оба значило бы усреднить неполный месяц
     // выписки вместе с целым периодом, который его же и накрывает.
     if (ownsMonth(totalsTouching(data.entries, cursor), cursor)) continue
-    const all = operationsOf(data.entries, cursor).filter((each) => each.kind === 'expense' && !each.special)
+    const all = operationsOf(data.entries, cursor).filter((each) => each.kind === 'expense' && !special(each, data))
     const expenses = all.filter((each) => !(each.recurringId !== undefined && without.has(each.recurringId)))
     excluded += all.length - expenses.length
     if (expenses.length === 0) continue
@@ -468,7 +526,7 @@ export function observations(
     (each) =>
       !each.deleted &&
       each.kind === 'expense' &&
-      !each.special &&
+      !special(each, data) &&
       each.period &&
       each.period.from < `${month}-01` &&
       !ownsMonth([each], month),
@@ -824,7 +882,7 @@ function byCategory(
 ): Map<string, number> {
   const sums = new Map<string, number>()
   for (const entry of entries) {
-    if (entry.kind !== 'expense' || entry.special) continue
+    if (entry.kind !== 'expense' || special(entry, data)) continue
     if (entry.recurringId !== undefined && without.has(entry.recurringId)) continue
     const result = toBase(entry, data)
     if ('missing' in result) continue
