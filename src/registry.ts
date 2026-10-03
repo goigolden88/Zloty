@@ -124,6 +124,7 @@ function feedData(data: Data): FeedData {
     accounts: data.accounts,
     categories: data.categories,
     currencies: data.currencies,
+    specials: data.specials,
   }
 }
 

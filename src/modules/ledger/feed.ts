@@ -17,8 +17,9 @@
 
 import { escapeMarkdown, type FeedItem } from '../../shared/core/feed.ts'
 import { formatDate, formatMonth, type Period } from '../../shared/core/dates.ts'
-import type { Account, Category, Currency, Entry } from '../../app/model.ts'
+import type { Account, Category, Currency, Entry, SpecialPeriod } from '../../app/model.ts'
 import { findCurrency, formatMoney } from '../money/money.ts'
+import { specialPeriodOf, specialTitle } from './specials.ts'
 
 /** Вид записи «Злотых» в ленте. Он один: долги и снимки придут своими этапами. */
 export const ENTRY_KIND = 'entry'
@@ -28,8 +29,22 @@ export type FeedData = {
   accounts: readonly Account[]
   categories: readonly Category[]
   currencies: readonly Currency[]
+  /** Особые периоды (Р-55): трата периода подписывается его названием. */
+  specials?: readonly SpecialPeriod[]
 }
 
+/**
+ * Пометка «особая» строкой (Р-05, Р-55): у траты периода — вместе с его
+ * названием, у траты с флагом — словом. Не особая — null.
+ *
+ * Период называется и у траты с флагом: в раскладке месяца она относится
+ * к периоду, и подпись говорит то же самое.
+ */
+export function specialNote(entry: Entry, specials: readonly SpecialPeriod[] = []): string | null {
+  const period = specialPeriodOf(entry, specials)
+  if (period) return `особая · ${specialTitle(period)}`
+  return entry.special ? 'особая' : null
+}
 function accountName(data: FeedData, id: string | undefined): string {
   return data.accounts.find((each) => each.id === id)?.name ?? 'счёт удалён'
 }
@@ -56,7 +71,8 @@ function detailOf(entry: Entry, data: FeedData): string {
   if (entry.toAccountId) parts.push(`→ ${accountName(data, entry.toAccountId)}`)
   else if (entry.kind === 'transfer') parts.push('второй счёт не указан')
 
-  if (entry.special) parts.push('особая')
+  const special = specialNote(entry, data.specials)
+  if (special) parts.push(special)
   if (entry.for) parts.push(`за ${formatMonth(entry.for)}`)
   if (entry.period) parts.push(`итог за ${formatDate(entry.period.from)} — ${formatDate(entry.period.to)}`)
 
