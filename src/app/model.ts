@@ -145,7 +145,11 @@ export type Entry = Base & {
   categoryId?: string
   /** У `transfer`; может быть неизвестен — «второй счёт не указан». */
   toAccountId?: string
-  /** Особая: во всех расходах есть, в обычном месяце нет (Р-05). */
+  /**
+   * Особая: во всех расходах есть, в обычном месяце нет (Р-05). Трата
+   * с датой внутри особого периода особая и без флага — это считается при
+   * чтении, флаг в запись не пишется (Р-55).
+   */
   special?: boolean
   /** От какой регулярной (Р-06). */
   recurringId?: string
@@ -196,6 +200,23 @@ export type Note = Base & {
   /** ГГГГ-ММ-ДД */
   date: string
   text: string
+}
+
+/**
+ * Особый период трат: поездка, отдых — дни, когда расход выше обычного (Р-55).
+ *
+ * Расход с датой внутри периода считается особым при чтении, флаг `special`
+ * в запись не пишется: удалили или подвинули период — траты снова обычные
+ * без переписывания записей. Регулярная, итог периода, доход и перевод
+ * особыми по периоду не становятся. Периоды не пересекаются.
+ */
+export type SpecialPeriod = Base & {
+  /** ГГГГ-ММ-ДД, первый день. */
+  from: string
+  /** ГГГГ-ММ-ДД, последний, включительно. */
+  to: string
+  /** «Поездка в Казань»; нет — подпись «Особый период». */
+  title?: string
 }
 
 // ─── Долги (Р-01, Р-05, Р-30, Р-31) ────────────────────────────────────────
@@ -326,6 +347,7 @@ export type StoreRecord = {
   loans: Loan
   repayments: Repayment
   notes: Note
+  specials: SpecialPeriod
 }
 
 /**
@@ -358,10 +380,18 @@ export const DEBT_STORES = [
 /** Заметки к капиталу — версия 3 (Р-36). */
 export const NOTE_STORES = ['notes'] as const satisfies readonly (keyof StoreRecord)[]
 
-/** Порядок, в котором хранилища пишут импорт и слепок: справочники раньше записей. */
-export const SYNCED_STORES = [...V1_STORES, ...DEBT_STORES, ...NOTE_STORES] as const satisfies readonly (keyof StoreRecord)[]
+/** Особые периоды трат — версия 4 (Р-55). */
+export const SPECIAL_STORES = ['specials'] as const satisfies readonly (keyof StoreRecord)[]
 
-export const SCHEMA_VERSION = 3
+/** Порядок, в котором хранилища пишут импорт и слепок: справочники раньше записей. */
+export const SYNCED_STORES = [
+  ...V1_STORES,
+  ...DEBT_STORES,
+  ...NOTE_STORES,
+  ...SPECIAL_STORES,
+] as const satisfies readonly (keyof StoreRecord)[]
+
+export const SCHEMA_VERSION = 4
 
 /**
  * Первая миграция схемы (Р-30).
@@ -403,7 +433,26 @@ const NOTES: Migration = {
   },
 }
 
-export const MIGRATIONS: readonly Migration[] = [DEBTS, NOTES]
+/**
+ * Третья миграция схемы (Р-55): хранилище особых периодов трат.
+ *
+ * Только добавляет — `additive: true`: записи учёта не трогает, флаг
+ * `special` не пишет и не стирает. Индекс — один `updatedAt`, как у долгов
+ * и заметок.
+ */
+const SPECIALS: Migration = {
+  to: 4,
+  note: 'Особые периоды трат: поездки, отдых',
+  additive: true,
+  run: (database) => {
+    for (const store of SPECIAL_STORES) {
+      const created = database.createObjectStore(store, { keyPath: 'id' })
+      created.createIndex('updatedAt', 'updatedAt') // нужен слиянию
+    }
+  },
+}
+
+export const MIGRATIONS: readonly Migration[] = [DEBTS, NOTES, SPECIALS]
 
 // ─── Даты записей ──────────────────────────────────────────────────────────
 

@@ -36,6 +36,7 @@ const LABELS: Record<(typeof SYNCED_STORES)[number], string> = {
   loans: 'Разовые долги',
   repayments: 'Возвраты долгов',
   notes: 'Заметки к капиталу',
+  specials: 'Особые периоды',
 }
 
 type Row = { store: (typeof SYNCED_STORES)[number]; live: number; total: number }
