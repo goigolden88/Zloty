@@ -8,6 +8,7 @@ import {
   createTransfer,
   eventProblem,
   nameOf,
+  orderedIds,
   personProblem,
   removed,
   roomProblem,
@@ -55,10 +56,49 @@ describe('люди: пометка «я» одна на справочник (у
     expect(sortedPeople([vera, borya, anya]).map((each) => each.name)).toEqual(['Аня', 'Боря', 'Вера'])
   })
 
+  it('без важных порядок прежний: «я» первым, даже если по алфавиту не первый', () => {
+    const yulia: Person = { id: 'person-yulia', updatedAt: at, name: 'Юля', self: true }
+    const vera: Person = { id: 'person-vera', updatedAt: at, name: 'Вера' }
+    expect(sortedPeople([vera, yulia, borya]).map((each) => each.name)).toEqual(['Юля', 'Боря', 'Вера'])
+  })
+
   it('архивные из списка уходят, а имя по id всё равно находится', () => {
     const gone = { ...borya, archived: true }
     expect(sortedPeople([anya, gone])).toHaveLength(1)
     expect(nameOf([anya, gone], gone.id)).toBe('Боря')
+  })
+
+  it('пометка «важный» записывается и снимается правкой (Р-56)', () => {
+    expect(createPerson({ name: 'Боря', self: false, starred: true }).starred).toBe(true)
+    expect(createPerson({ name: 'Боря', self: false }).starred).toBeUndefined()
+    const starred: Person = { ...borya, starred: true }
+    expect(updatePerson(starred, { name: 'Боря', self: false, starred: false }).starred).toBeUndefined()
+  })
+
+  it('важные — сразу за «я», каждые по алфавиту (Р-56)', () => {
+    const yulia: Person = { id: 'person-yulia', updatedAt: at, name: 'Юля', self: true }
+    const vera: Person = { id: 'person-vera', updatedAt: at, name: 'Вера' }
+    const gleb: Person = { id: 'person-gleb', updatedAt: at, name: 'Глеб', starred: true }
+    const yasha: Person = { id: 'person-yasha', updatedAt: at, name: 'Яша', starred: true }
+    expect(sortedPeople([yasha, vera, borya, gleb, yulia]).map((each) => each.name)).toEqual([
+      'Юля',
+      'Глеб',
+      'Яша',
+      'Боря',
+      'Вера',
+    ])
+  })
+
+  it('архивный важный остаётся скрытым (Р-56)', () => {
+    const gone: Person = { ...borya, starred: true, archived: true }
+    expect(sortedPeople([anya, gone]).map((each) => each.name)).toEqual(['Аня'])
+  })
+
+  it('состав комнаты в выборе идёт тем же порядком, архивный — в конце, а не пропадает (Р-56)', () => {
+    const vera: Person = { id: 'person-vera', updatedAt: at, name: 'Вера', starred: true }
+    const gone: Person = { id: 'person-gone', updatedAt: at, name: 'Агата', archived: true }
+    const ids = [borya.id, gone.id, vera.id, anya.id]
+    expect(orderedIds([anya, borya, vera, gone], ids)).toEqual([anya.id, vera.id, borya.id, gone.id])
   })
 
   it('имя исчезнувшего называется словами, а не пустотой', () => {

@@ -34,7 +34,7 @@ const live = <T extends { deleted?: boolean }>(list: readonly T[]): T[] => list.
 
 // ─── Люди ──────────────────────────────────────────────────────────────────
 
-export type PersonDraft = { name: string; self: boolean }
+export type PersonDraft = { name: string; self: boolean; starred?: boolean }
 
 /**
  * Пометка «я» одна на справочник (условие 2 Р-01): по ней идут все выборки
@@ -69,14 +69,31 @@ export function updatePerson(record: Person, draft: PersonDraft): Person {
 function fillPerson(draft: PersonDraft, base: { id: string; updatedAt: string }): Person {
   const person: Person = { ...base, name: clean(draft.name) }
   if (draft.self) person.self = true
+  if (draft.starred) person.starred = true
   return person
 }
 
-/** Люди по алфавиту; «я» — первым: с него начинается любой ответ про долги. */
+/** Место в порядке: «я» — первым, затем важные, затем остальные (Р-56). */
+const rank = (person: Person) => (person.self ? 0 : person.starred ? 1 : 2)
+
+/**
+ * Люди по алфавиту; «я» — первым: с него начинается любой ответ про долги.
+ * Важные — сразу за «я», чтобы при выборе их не искать в алфавите (Р-56).
+ */
 export function sortedPeople(list: readonly Person[]): Person[] {
   return live(list)
     .filter((each) => !each.archived)
-    .sort((a, b) => Number(Boolean(b.self)) - Number(Boolean(a.self)) || a.name.localeCompare(b.name, 'ru'))
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, 'ru'))
+}
+
+/**
+ * Состав комнаты или события в порядке `sortedPeople` — для выбора в формах.
+ * Архивный и удалённый из состава не выпадают: они уходят в конец, как были.
+ */
+export function orderedIds(people: readonly Person[], ids: readonly string[]): string[] {
+  const order = sortedPeople(people).map((each) => each.id)
+  const known = order.filter((id) => ids.includes(id))
+  return [...known, ...ids.filter((id) => !order.includes(id))]
 }
 
 /** Имя человека по id; нет такого — так и сказано, а не пустая строка. */

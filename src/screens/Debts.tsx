@@ -589,6 +589,7 @@ function People({ data }: { data: DebtsData }) {
         {live.map((person) => (
           <li key={person.id} className="line">
             <div className="line__main">
+              {person.starred && '★ '}
               {person.name}
               {person.self && <span className="muted"> · это вы</span>}
             </div>
@@ -637,10 +638,11 @@ function PersonForm({
 }) {
   const [name, setName] = useState(record?.name ?? '')
   const [self, setSelf] = useState(record?.self === true)
+  const [starred, setStarred] = useState(record?.starred === true)
   const [error, setError] = useState('')
 
   function submit() {
-    const draft: PersonDraft = { name, self }
+    const draft: PersonDraft = { name, self, starred }
     const problem = personProblem(data.people, draft, record?.id)
     if (problem) return setError(problem)
     setError('')
@@ -662,6 +664,12 @@ function PersonForm({
         Пометка нужна одному человеку. По ней приложение отличает ваши долги от чужих: в комнате вы такой же
         участник, как остальные.
       </p>
+
+      <label className="check">
+        <input type="checkbox" checked={starred} onChange={(event) => setStarred(event.target.checked)} />
+        Важный
+      </label>
+      <p className="muted">Важные идут сразу за вами везде, где выбирают людей, — не нужно искать их в алфавите.</p>
 
       {error && <p className="error">{error}</p>}
 
