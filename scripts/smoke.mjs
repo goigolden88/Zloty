@@ -1451,6 +1451,24 @@ async function scenario(profile) {
   await act(`byText('button', 'Отмена').click();`)
   await sleep(400)
 
+  // Важный (Р-56): флажок в форме человека, «★» перед именем в списке.
+  await act(`
+    const row = [...document.querySelectorAll('li.line')].find((el) => el.textContent.startsWith('Боря'));
+    [...row.querySelectorAll('button')].find((el) => el.textContent.includes('Изменить')).click();
+  `)
+  await sleep(400)
+  const starForm = await screen()
+  check('в форме человека есть флажок «Важный»', has(starForm, 'Важный'), line(starForm, 'Важный'))
+  await act(`
+    [...document.querySelectorAll('.form label.check')].find((el) => el.textContent.includes('Важный'))
+      .querySelector('input').click();
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Сохранить').click();`)
+  await sleep(700)
+  const starred = await screen()
+  check('важный в списке людей помечен «★»', has(starred, '★ Боря'), line(starred, 'Боря'))
+
   // Разовый долг: три поля и дата сегодняшним числом.
   await act(`if (!byText('button', 'Записать долг')) startsWith('.fold__btn', 'Разовые долги').click();`)
   await sleep(400)
