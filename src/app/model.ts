@@ -231,6 +231,8 @@ export type SpecialPeriod = Base & {
 export type Person = Base & {
   name: string
   self?: true
+  /** Важный: при выборе людей идёт сразу после «я» (Р-56). */
+  starred?: true
   archived?: boolean
 }
 

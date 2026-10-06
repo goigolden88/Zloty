@@ -10,6 +10,7 @@ import {
   eventProblem,
   nameOf,
   removed,
+  sortedIds,
   updateEvent,
   updateSpend,
   type EventDraft,
@@ -428,7 +429,7 @@ function EventForm({
 
       <fieldset className="field">
         <legend>Кто участвовал</legend>
-        {room.personIds.map((id) => (
+        {sortedIds(people, room.personIds).map((id) => (
           <label key={id} className="check">
             <input type="checkbox" checked={chosen.includes(id)} onChange={() => toggle(id)} />
             {nameOf(people, id)}
@@ -519,7 +520,7 @@ function SpendForm({
   const [error, setError] = useState('')
 
   // Люди, которых трата делит, но в событии их уже нет, — не теряются при правке.
-  const listed = [...event.personIds, ...chosen.filter((id) => !event.personIds.includes(id))]
+  const listed = sortedIds(people, [...event.personIds, ...chosen.filter((id) => !event.personIds.includes(id))])
 
   function toggle(id: string) {
     setChosen((was) => (was.includes(id) ? was.filter((each) => each !== id) : [...was, id]))
@@ -715,7 +716,7 @@ function Transfers({
           <label className="field">
             Кто перевёл
             <select value={fromId} onChange={(input) => setFromId(input.target.value)}>
-              {room.personIds.map((id) => (
+              {sortedIds(people, room.personIds).map((id) => (
                 <option key={id} value={id}>
                   {nameOf(people, id)}
                 </option>
@@ -726,7 +727,7 @@ function Transfers({
           <label className="field">
             Кому
             <select value={toId} onChange={(input) => setToId(input.target.value)}>
-              {room.personIds.map((id) => (
+              {sortedIds(people, room.personIds).map((id) => (
                 <option key={id} value={id}>
                   {nameOf(people, id)}
                 </option>

@@ -1424,13 +1424,21 @@ async function scenario(profile) {
 
   await act(`byText('button', 'Завести человека').click();`)
   await sleep(400)
-  await act(`set(document.querySelector('.form input'), 'Боря');`)
+  // Боря — важный (Р-56): флажок ищется по подписи, а не по месту в форме.
+  await act(`
+    set(document.querySelector('.form input'), 'Боря');
+    [...document.querySelectorAll('.form label.check')]
+      .find((el) => el.textContent.trim() === 'Важный')
+      .querySelector('input')
+      .click();
+  `)
   await sleep(300)
   await act(`byText('button', 'Завести').click();`)
   await sleep(700)
 
   const people = await screen()
   check('люди завелись, и «я» помечен', has(people, 'это вы'), line(people, 'это вы'))
+  check('важный отмечен звёздочкой перед именем', has(people, '★ Боря'), line(people, '★ Боря'))
 
   // Вторая пометка «я» не ставится: по ней идут все выборки «мои долги».
   await act(`byText('button', 'Завести человека').click();`)

@@ -12,6 +12,7 @@ import {
   removed,
   roomProblem,
   setClosed,
+  sortedIds,
   sortedPeople,
   transferProblem,
   updatePerson,
@@ -25,36 +26,80 @@ const borya: Person = { id: 'person-borya', updatedAt: at, name: 'Боря' }
 
 describe('люди: пометка «я» одна на справочник (условие 2 Р-01)', () => {
   it('имя обязательно и чистится от лишних пробелов', () => {
-    expect(personProblem([], { name: '   ', self: false })).toBe('Без имени человека не завести')
-    expect(createPerson({ name: '  Вера   Ивановна ', self: false }).name).toBe('Вера Ивановна')
+    expect(personProblem([], { name: '   ', self: false, starred: false })).toBe('Без имени человека не завести')
+    expect(createPerson({ name: '  Вера   Ивановна ', self: false, starred: false }).name).toBe('Вера Ивановна')
   })
 
   it('тёзка не заводится — иначе долги разъедутся по двум записям', () => {
-    expect(personProblem([borya], { name: 'боря', self: false })).toBe('Такой человек уже есть')
+    expect(personProblem([borya], { name: 'боря', self: false, starred: false })).toBe('Такой человек уже есть')
   })
 
   it('вторая пометка «я» не ставится, и сказано, на ком стоит первая', () => {
-    expect(personProblem([anya], { name: 'Боря', self: true })).toBe('Пометка «это я» уже стоит на «Аня»')
+    expect(personProblem([anya], { name: 'Боря', self: true, starred: false })).toBe('Пометка «это я» уже стоит на «Аня»')
   })
 
   it('себя же правя, на свою пометку не жалуется', () => {
-    expect(personProblem([anya], { name: 'Аня', self: true }, anya.id)).toBeNull()
+    expect(personProblem([anya], { name: 'Аня', self: true, starred: false }, anya.id)).toBeNull()
   })
 
   it('удалённый тёзка не мешает', () => {
-    expect(personProblem([{ ...borya, deleted: true }], { name: 'Боря', self: false })).toBeNull()
+    expect(personProblem([{ ...borya, deleted: true }], { name: 'Боря', self: false, starred: false })).toBeNull()
   })
 
   it('правка не теряет архив', () => {
     const archived = { ...borya, archived: true }
-    expect(updatePerson(archived, { name: 'Боря', self: false }).archived).toBe(true)
+    expect(updatePerson(archived, { name: 'Боря', self: false, starred: false }).archived).toBe(true)
   })
 
   it('в списке «я» идёт первым, остальные по алфавиту', () => {
     const vera: Person = { id: 'person-vera', updatedAt: at, name: 'Вера' }
     expect(sortedPeople([vera, borya, anya]).map((each) => each.name)).toEqual(['Аня', 'Боря', 'Вера'])
   })
+})
 
+describe('важные люди — первыми при выборе (Р-56)', () => {
+  const me: Person = { id: 'person-yasha', updatedAt: at, name: 'Яша', self: true }
+  const vera: Person = { id: 'person-vera', updatedAt: at, name: 'Вера' }
+  const gena: Person = { id: 'person-gena', updatedAt: at, name: 'Гена', starred: true }
+  const zhenya: Person = { id: 'person-zhenya', updatedAt: at, name: 'Женя', starred: true }
+  const names = (list: readonly Person[]) => list.map((each) => each.name)
+
+  it('«я» → важные → остальные, каждые по алфавиту', () => {
+    expect(names(sortedPeople([vera, zhenya, borya, me, gena]))).toEqual(['Яша', 'Гена', 'Женя', 'Боря', 'Вера'])
+  })
+
+  it('«я» с пометкой «важный» всё равно первым', () => {
+    expect(names(sortedPeople([gena, { ...me, starred: true }]))).toEqual(['Яша', 'Гена'])
+  })
+
+  it('архивный важный скрыт', () => {
+    expect(names(sortedPeople([vera, { ...gena, archived: true }, me]))).toEqual(['Яша', 'Вера'])
+  })
+
+  it('без важных порядок прежний', () => {
+    expect(names(sortedPeople([vera, borya, me]))).toEqual(['Яша', 'Боря', 'Вера'])
+  })
+
+  it('пометка ставится, снимается и переживает правку', () => {
+    const made = createPerson({ name: 'Гена', self: false, starred: true })
+    expect(made.starred).toBe(true)
+    expect(updatePerson(made, { name: 'Гена', self: false, starred: false })).not.toHaveProperty('starred')
+    expect(createPerson({ name: 'Вера', self: false, starred: false })).not.toHaveProperty('starred')
+  })
+
+  it('записанный состав идёт тем же порядком; архивный не выпадает, исчезнувший — в конце', () => {
+    const people = [me, vera, gena, { ...borya, archived: true }]
+    expect(sortedIds(people, ['person-nobody', vera.id, borya.id, gena.id, me.id])).toEqual([
+      me.id,
+      gena.id,
+      borya.id,
+      vera.id,
+      'person-nobody',
+    ])
+  })
+})
+
+describe('люди: архив и исчезнувшие', () => {
   it('архивные из списка уходят, а имя по id всё равно находится', () => {
     const gone = { ...borya, archived: true }
     expect(sortedPeople([anya, gone])).toHaveLength(1)

@@ -34,7 +34,7 @@ const live = <T extends { deleted?: boolean }>(list: readonly T[]): T[] => list.
 
 // ─── Люди ──────────────────────────────────────────────────────────────────
 
-export type PersonDraft = { name: string; self: boolean }
+export type PersonDraft = { name: string; self: boolean; starred: boolean }
 
 /**
  * Пометка «я» одна на справочник (условие 2 Р-01): по ней идут все выборки
@@ -69,14 +69,41 @@ export function updatePerson(record: Person, draft: PersonDraft): Person {
 function fillPerson(draft: PersonDraft, base: { id: string; updatedAt: string }): Person {
   const person: Person = { ...base, name: clean(draft.name) }
   if (draft.self) person.self = true
+  if (draft.starred) person.starred = true
   return person
 }
 
-/** Люди по алфавиту; «я» — первым: с него начинается любой ответ про долги. */
+/**
+ * Порядок людей везде, где их выбирают (Р-56): «я» — первым, с него
+ * начинается любой ответ про долги; затем важные, затем остальные;
+ * внутри — по алфавиту.
+ */
+function byOrder(a: Person, b: Person): number {
+  return rank(a) - rank(b) || a.name.localeCompare(b.name, 'ru')
+}
+
+const rank = (person: Person) => (person.self ? 0 : person.starred ? 1 : 2)
+
+/** Живые люди в порядке выбора; архивные — и важные тоже — скрыты. */
 export function sortedPeople(list: readonly Person[]): Person[] {
   return live(list)
     .filter((each) => !each.archived)
-    .sort((a, b) => Number(Boolean(b.self)) - Number(Boolean(a.self)) || a.name.localeCompare(b.name, 'ru'))
+    .sort(byOrder)
+}
+
+/**
+ * Уже записанный состав — комнаты, события, траты — в том же порядке.
+ * Никто из состава не выпадает: архивный остаётся на своём месте по правилу,
+ * а кого нет в справочнике — в конце, как стоял.
+ */
+export function sortedIds(list: readonly Person[], ids: readonly string[]): string[] {
+  const known = new Map(list.map((each) => [each.id, each]))
+  return [...ids].sort((a, b) => {
+    const first = known.get(a)
+    const second = known.get(b)
+    if (!first || !second) return Number(!first) - Number(!second)
+    return byOrder(first, second)
+  })
 }
 
 /** Имя человека по id; нет такого — так и сказано, а не пустая строка. */
