@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Currency, Loan, Money, Person, Room } from '../app/model.ts'
+import { loanGroups } from '../modules/debts/loanGroups.ts'
 import { loanState, signedLeft } from '../modules/debts/loans.ts'
 import {
   createLoan,
@@ -153,18 +154,25 @@ function PersonLine({ debt, data, ledger }: { debt: PersonDebt; data: DebtsData;
         {nameOf(data.people, debt.personId)}
         <span className="muted"> · {basis.join(', ')}</span>
       </div>
-      <div className="row row--wrap">
-        {debt.amounts.map((money) => (
-          <span key={money.currency} className={money.amount > 0 ? 'good' : 'error'}>
-            {money.amount > 0 ? 'должен вам ' : 'вы должны '}
-            {formatMoney(
-              { amount: Math.abs(money.amount), currency: money.currency },
-              findCurrency(ledger.currencies, money.currency),
-            )}
-          </span>
-        ))}
-      </div>
+      <SignedAmounts amounts={debt.amounts} ledger={ledger} />
     </li>
+  )
+}
+
+/** Итог человека по валютам: «должен вам …», «вы должны …» — каждая валюта своей строкой. */
+function SignedAmounts({ amounts, ledger }: { amounts: readonly Money[]; ledger: LedgerData }) {
+  return (
+    <div className="row row--wrap">
+      {amounts.map((money) => (
+        <span key={money.currency} className={money.amount > 0 ? 'good' : 'error'}>
+          {money.amount > 0 ? 'должен вам ' : 'вы должны '}
+          {formatMoney(
+            { amount: Math.abs(money.amount), currency: money.currency },
+            findCurrency(ledger.currencies, money.currency),
+          )}
+        </span>
+      ))}
+    </div>
   )
 }
 
@@ -173,7 +181,8 @@ function PersonLine({ debt, data, ledger }: { debt: PersonDebt; data: DebtsData;
 function Loans({ data, ledger }: { data: DebtsData; ledger: LedgerData }) {
   const [adding, setAdding] = useState(false)
   const live = data.loans.filter((each) => !each.deleted)
-  const open = live.filter((loan) => !loanState(loan, data.repayments).closed)
+  const groups = loanGroups(data.people, data.loans, data.repayments)
+  const open = groups.flatMap((group) => group.loans)
   const closed = live.filter((loan) => loanState(loan, data.repayments).closed)
 
   async function save(draft: LoanDraft) {
@@ -194,9 +203,26 @@ function Loans({ data, ledger }: { data: DebtsData; ledger: LedgerData }) {
 
       {open.length === 0 && !adding && <p className="muted">Открытых долгов нет.</p>}
 
+      {/* По человеку: «что у меня с Петей» — вопрос про человека (Р-58). */}
       <ul className="plain">
-        {open.map((loan) => (
-          <LoanLine key={loan.id} loan={loan} data={data} ledger={ledger} />
+        {groups.map((group) => (
+          <li key={group.personId} className="loan-group">
+            <div className="line">
+              <div className="line__main">
+                <b>{nameOf(data.people, group.personId)}</b>
+              </div>
+              {group.amounts.length > 0 ? (
+                <SignedAmounts amounts={group.amounts} ledger={ledger} />
+              ) : (
+                <span className="muted">встречные долги равны</span>
+              )}
+            </div>
+            <ul className="plain sub">
+              {group.loans.map((loan) => (
+                <LoanLine key={loan.id} loan={loan} data={data} ledger={ledger} />
+              ))}
+            </ul>
+          </li>
         ))}
       </ul>
 
@@ -256,9 +282,8 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
   return (
     <li className="line">
       <div className="line__main">
-        {nameOf(data.people, loan.personId)}
+        {/* Имя — в заголовке группы, здесь не повторяется (Р-58). */}
         <span className="muted">
-          {' · '}
           {mine ? 'должен вам' : 'вы должны'} · от {formatDateLoose(loan.date)}
           {loan.note ? ` · ${loan.note}` : ''}
         </span>
