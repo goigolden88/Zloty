@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { Loan, Repayment } from '../../app/model.ts'
 import {
   foreignRepayments,
+  lastRepayment,
   loanProblem,
   loanState,
   repaymentProblem,
   repaymentsOf,
   signedLeft,
 } from './loans.ts'
+import { removed, repayAll } from './records.ts'
 
 /** Люди выдуманные: код публичный (CLAUDE.md). */
 const BORYA = 'person-borya'
@@ -138,5 +140,71 @@ describe('кривой долг называется, а не проглатыв
     const saved = repayment({ id: 'r1', money: { amount: 500000, currency: 'RUB' } })
     const edited = { ...saved, money: { amount: 400000, currency: 'RUB' } }
     expect(repaymentProblem(edited, loan({ id: 'loan-1' }), [saved])).toBeNull()
+  })
+})
+
+describe('«Вернули всё» — возврат на весь остаток (Р-59)', () => {
+  it('после частичного возврата пишется ровно остаток, и долг закрыт', () => {
+    const debt = loan({ id: 'loan-1' })
+    const before = [repayment({ id: 'r1' })]
+    const whole = repayAll(debt, before, '2026-10-07')
+    expect(whole).toMatchObject({ loanId: 'loan-1', money: { amount: 300000, currency: 'RUB' }, date: '2026-10-07' })
+    expect(whole && repaymentProblem(whole, debt, before)).toBeNull()
+    expect(loanState(debt, [...before, whole!]).closed).toBe(true)
+  })
+
+  it('валюта — долга, а не чужого возврата', () => {
+    const debt = loan({ id: 'loan-1', money: { amount: 10000, currency: 'USD' } })
+    const foreign = repayment({ id: 'r1', money: { amount: 5000, currency: 'RUB' } })
+    expect(repayAll(debt, [foreign], '2026-10-07')?.money).toEqual({ amount: 10000, currency: 'USD' })
+  })
+
+  it('удалённый возврат в остаток не идёт', () => {
+    const gone = repayment({ id: 'r1', deleted: true })
+    expect(repayAll(loan({ id: 'loan-1' }), [gone], '2026-10-07')?.money.amount).toBe(500000)
+  })
+
+  it('закрытый долг — возвращать нечего', () => {
+    const all = repayment({ id: 'r1', money: { amount: 500000, currency: 'RUB' } })
+    expect(repayAll(loan({ id: 'loan-1' }), [all], '2026-10-07')).toBeNull()
+  })
+})
+
+describe('«Открыть снова» снимает последний возврат и только его (Р-59)', () => {
+  const debt = loan({ id: 'loan-1' })
+
+  it('последний — по дате', () => {
+    const late = repayment({ id: 'r2', date: '2026-09-20', updatedAt: '2026-09-01T10:00:00.000Z' })
+    const early = repayment({ id: 'r1', date: '2026-09-01', updatedAt: '2026-09-25T10:00:00.000Z' })
+    expect(lastRepayment(debt, [late, early])?.id).toBe('r2')
+  })
+
+  it('одной датой — по времени записи: частичный и следом «Вернули всё» — снимается второй', () => {
+    const part = repayment({ id: 'r1', date: '2026-10-07', updatedAt: '2026-10-07T09:00:00.000Z' })
+    const whole = repayment({
+      id: 'r2',
+      date: '2026-10-07',
+      updatedAt: '2026-10-07T09:05:00.000Z',
+      money: { amount: 300000, currency: 'RUB' },
+    })
+    const list = [whole, part]
+    const last = lastRepayment(debt, list)
+    expect(last?.id).toBe('r2')
+
+    const after = list.map((each) => (each.id === last?.id ? removed(each) : each))
+    expect(after.filter((each) => each.deleted).map((each) => each.id)).toEqual(['r2'])
+    expect(loanState(debt, after)).toMatchObject({ left: 300000, closed: false })
+  })
+
+  it('удалённые и чужие возвраты не снимаются', () => {
+    const live = repayment({ id: 'r1', date: '2026-09-01' })
+    const gone = repayment({ id: 'r2', date: '2026-09-20', deleted: true })
+    const other = repayment({ id: 'r3', date: '2026-09-25', loanId: 'loan-other' })
+    const foreign = repayment({ id: 'r4', date: '2026-09-30', money: { amount: 5000, currency: 'USD' } })
+    expect(lastRepayment(debt, [live, gone, other, foreign])?.id).toBe('r1')
+  })
+
+  it('снимать нечего — так и сказано', () => {
+    expect(lastRepayment(debt, [])).toBeNull()
   })
 })
