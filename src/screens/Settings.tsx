@@ -3,7 +3,7 @@ import { config } from '../app/config.ts'
 import { db } from '../app/core.ts'
 import { CHANGES } from '../changes.ts'
 import { SCHEMA_VERSION, SYNCED_STORES } from '../app/model.ts'
-import { monthPeriod, monthOf, formatMonth, today } from '../shared/core/dates.ts'
+import { monthPeriod, monthOf, formatDate, formatMonth, today } from '../shared/core/dates.ts'
 import { markdownExport } from '../registry.ts'
 import { backupNote, backupSummary } from '../shared/ui/backup.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
@@ -205,19 +205,20 @@ function Backup({ onChanged }: { onChanged: () => Promise<void> }) {
       {note && <p className="note">{note}</p>}
       {error && <p className="error">{error}</p>}
 
-      <h3>Выгрузка для чтения</h3>
-      <p className="muted">
-        Текстом, а не для переноса: обратно такой файл не загружается. Пригодится, чтобы разобрать
-        месяц в беседе с ИИ.
-      </p>
-      <div className="row row--wrap">
-        <button type="button" disabled={busy} onClick={() => void asText(null)}>
-          Весь учёт
-        </button>
-        <button type="button" disabled={busy} onClick={() => void asText(monthOf(today()))}>
-          Этот месяц
-        </button>
-      </div>
+      <Fold id="settings:backup:text" title="Выгрузка для чтения" sub folded>
+        <p className="muted">
+          Текстом, а не для переноса: обратно такой файл не загружается. Пригодится, чтобы разобрать
+          месяц в беседе с ИИ.
+        </p>
+        <div className="row row--wrap">
+          <button type="button" disabled={busy} onClick={() => void asText(null)}>
+            Весь учёт
+          </button>
+          <button type="button" disabled={busy} onClick={() => void asText(monthOf(today()))}>
+            Этот месяц
+          </button>
+        </div>
+      </Fold>
     </Fold>
   )
 }
@@ -450,36 +451,46 @@ function WakeLog({ wakes }: { wakes: Wake[] | null }) {
   )
 }
 
+/**
+ * Длинное — подгруппами, свёрнутыми: нужное раскрывается само, остальное
+ * не листается. У свёрнутых в заголовке — главное: версия схемы и дата
+ * последнего изменения. Строка о приложении и отчёт об ошибке видны сразу.
+ */
 function About({ state }: { state: State }) {
+  const last = CHANGES.at(-1)
+
   return (
     <Fold id="settings:about" title="О приложении" folded>
       <p className="muted">
         {config.name}: {config.about.data}. Всё хранится на этом устройстве и работает без сети.
       </p>
 
-      <h3 className="unit__name">Что где лежит</h3>
-      {state.status === 'loading' && <p className="muted">Считаю…</p>}
-      {state.status === 'failed' && <p className="error">{state.message}</p>}
-      {state.status === 'ready' && (
-        <ul>
-          {state.rows.map((row) => (
-            <li key={row.store}>
-              {LABELS[row.store]}: {row.live}
-              {row.total > row.live && <span className="muted"> (и ещё удалённых: {row.total - row.live})</span>}
-            </li>
-          ))}
-        </ul>
-      )}
+      <Fold id="settings:about:stores" title="Что где лежит" summary={`схема ${SCHEMA_VERSION}`} sub folded>
+        {state.status === 'loading' && <p className="muted">Считаю…</p>}
+        {state.status === 'failed' && <p className="error">{state.message}</p>}
+        {state.status === 'ready' && (
+          <ul>
+            {state.rows.map((row) => (
+              <li key={row.store}>
+                {LABELS[row.store]}: {row.live}
+                {row.total > row.live && <span className="muted"> (и ещё удалённых: {row.total - row.live})</span>}
+              </li>
+            ))}
+          </ul>
+        )}
 
-      <p className="muted">
-        Версия схемы данных: {SCHEMA_VERSION}. Сборка: {__BUILD_TIME__}.
-      </p>
+        <p className="muted">
+          Версия схемы данных: {SCHEMA_VERSION}. Сборка: {__BUILD_TIME__}.
+        </p>
+      </Fold>
 
-      <h3 className="unit__name">Установка</h3>
-      <InstallNote empty={false} />
+      <Fold id="settings:about:install" title="Установка" sub folded>
+        <InstallNote empty={false} />
+      </Fold>
 
-      <h3 className="unit__name">Что нового</h3>
-      <ChangeList changes={CHANGES} />
+      <Fold id="settings:about:changes" title="Что нового" summary={last && formatDate(last.date)} sub folded>
+        <ChangeList changes={CHANGES} />
+      </Fold>
 
       <ReportBug />
     </Fold>
