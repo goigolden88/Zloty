@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Currency, Loan, Money, Person, Room } from '../app/model.ts'
 import { loanGroups } from '../modules/debts/loanGroups.ts'
-import { loanState, signedLeft } from '../modules/debts/loans.ts'
+import { lastRepayment, loanState, signedLeft } from '../modules/debts/loans.ts'
 import {
   createLoan,
   createPerson,
@@ -12,6 +12,7 @@ import {
   nameOf,
   personProblem,
   removed,
+  repayAll,
   roomProblem,
   setClosed,
   sortedPeople,
@@ -239,19 +240,28 @@ function Loans({ data, ledger }: { data: DebtsData; ledger: LedgerData }) {
       {closed.length > 0 && (
         <Fold id="debts:loans:closed" title="Закрытые" sub summary={<span className="muted">{closed.length}</span>} folded>
           <ul className="plain">
-            {closed.map((loan) => (
-              <li key={loan.id} className="line">
-                <div className="line__main">
-                  {nameOf(data.people, loan.personId)}
-                  <span className="muted"> · {loan.direction === 'lent' ? 'давали' : 'брали'} · рассчитались</span>
-                </div>
-                <div className="row row--wrap">
-                  <span className="muted">
-                    {formatMoney(loan.money, findCurrency(ledger.currencies, loan.money.currency))}
-                  </span>
-                </div>
-              </li>
-            ))}
+            {closed.map((loan) => {
+              const last = lastRepayment(loan, data.repayments)
+              return (
+                <li key={loan.id} className="line">
+                  <div className="line__main">
+                    {nameOf(data.people, loan.personId)}
+                    <span className="muted"> · {loan.direction === 'lent' ? 'давали' : 'брали'} · рассчитались</span>
+                  </div>
+                  <div className="row row--wrap">
+                    <span className="muted">
+                      {formatMoney(loan.money, findCurrency(ledger.currencies, loan.money.currency))}
+                    </span>
+                    {/* Снимает последний возврат — долг возвращается с прежним остатком (Р-59). */}
+                    {last && (
+                      <button type="button" onClick={() => void db.put('repayments', removed(last))}>
+                        Открыть снова
+                      </button>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         </Fold>
       )}
@@ -277,6 +287,11 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
     await db.put('repayments', createRepayment(loan.id, { amount: parsed.amount, currency: loan.money.currency }, today()))
     setAmount('')
     setPaying(false)
+  }
+
+  async function repayWhole() {
+    const whole = repayAll(loan, data.repayments, today())
+    if (whole) await db.put('repayments', whole)
   }
 
   return (
@@ -317,6 +332,10 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
           <>
             <button type="button" onClick={() => setPaying(true)}>
               Вернули
+            </button>
+            {/* Без подтверждения: ошибку тапа исправляет «Открыть снова» в «Закрытых» (Р-59). */}
+            <button type="button" onClick={() => void repayWhole()}>
+              Вернули всё
             </button>
             <button type="button" onClick={() => void db.put('loans', removed(loan))}>
               Удалить

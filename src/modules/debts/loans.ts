@@ -62,6 +62,22 @@ export function signedLeft(loan: Loan, repayments: readonly Repayment[]): Money 
   }
 }
 
+/**
+ * Последний записанный возврат долга — его снимает «Открыть снова» (Р-59).
+ *
+ * Последний — по дате, при равной дате — по времени записи: частичный возврат
+ * и следом «Вернули всё» одним днём — снимается второй. Удалённые и чужой
+ * валюты не в счёт: они в остаток не входят, и снятие их долг не откроет.
+ * `null` — снимать нечего.
+ */
+export function lastRepayment(loan: Loan, repayments: readonly Repayment[]): Repayment | null {
+  const list = repaymentsOf(repayments, loan)
+  if (list.length === 0) return null
+  return list.reduce((last, each) =>
+    each.date > last.date || (each.date === last.date && each.updatedAt > last.updatedAt) ? each : last,
+  )
+}
+
 /** Что не так с долгом. `null` — всё сходится. */
 export function loanProblem(loan: Loan): string | null {
   if (!Number.isInteger(loan.money.amount) || loan.money.amount <= 0) {

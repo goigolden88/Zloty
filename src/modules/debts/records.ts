@@ -22,6 +22,7 @@ import type {
   RoomSpend,
   RoomTransfer,
 } from '../../app/model.ts'
+import { loanState } from './loans.ts'
 
 /** Лишние пробелы — не часть имени. */
 function clean(value: string): string {
@@ -266,6 +267,18 @@ export function updateLoan(record: Loan, draft: LoanDraft): Loan {
 
 export function createRepayment(loanId: string, money: Money, date: string): Repayment {
   return { id: ulid(), updatedAt: nowIso(), loanId, money: { ...money }, date }
+}
+
+/**
+ * «Вернули всё» (Р-59): возврат на весь остаток, в валюте долга.
+ *
+ * Обычный возврат, как при вводе суммы: остаток по-прежнему считается по
+ * возвратам. `null` — возвращать нечего, долг уже закрыт.
+ */
+export function repayAll(loan: Loan, repayments: readonly Repayment[], date: string): Repayment | null {
+  const { left } = loanState(loan, repayments)
+  if (left === 0) return null
+  return createRepayment(loan.id, { amount: left, currency: loan.money.currency }, date)
 }
 
 /** Мягкое удаление: запись остаётся надгробием, иначе её воскресит синхронизация. */
