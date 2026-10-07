@@ -1666,6 +1666,112 @@ async function scenario(profile) {
     line(linked, 'своя доля'),
   )
 
+  // ── Удаление закрытой комнаты (Р-57): у открытой кнопки нет, со связью
+  //    с учётом — отказ с числом связей, без связей — подтверждение и
+  //    возврат на «Долги».
+  const closedRooms = `
+    if (!byText('button', 'Завести комнату')) startsWith('.fold__btn', 'Комнаты').click();
+  `
+  const openClosed = (name) => `
+    if (!byText('a', ${JSON.stringify(name)})) {
+      const box = startsWith('.fold__btn', 'Комнаты').closest('section');
+      [...box.querySelectorAll('.fold__btn')].find((each) => each.textContent.trim() === 'Закрытые').click();
+    }
+  `
+  const pressInRow = (name, label) => `
+    const row = [...document.querySelectorAll('li.line')].find((el) =>
+      el.textContent.includes(${JSON.stringify(name)}) &&
+      [...el.querySelectorAll('button')].some((each) => each.textContent.trim() === ${JSON.stringify(label)}));
+    [...row.querySelectorAll('button')].find((each) => each.textContent.trim() === ${JSON.stringify(label)}).click();
+  `
+  const unfoldRemove = `if (!byText('button', 'Удалить комнату')) startsWith('.fold__btn', 'Удаление').click();`
+
+  await go('/debts')
+  await sleep(400)
+  await act(closedRooms)
+  await sleep(400)
+  await act(`byText('a', 'Лето').click();`)
+  await sleep(800)
+  const openRoom = await run(`!![...document.querySelectorAll('.fold__btn')].find((el) => el.textContent.trim() === 'Удаление')`)
+  check('у открытой комнаты удаления нет', openRoom === false, String(openRoom))
+
+  await go('/debts')
+  await sleep(400)
+  await act(pressInRow('Лето', 'Закрыть'))
+  await sleep(800)
+  await act(openClosed('Лето'))
+  await sleep(500)
+  await act(`byText('a', 'Лето').click();`)
+  await sleep(800)
+  await act(unfoldRemove)
+  await sleep(600)
+  await act(`byText('button', 'Удалить комнату').click();`)
+  await sleep(500)
+  const refused = await screen()
+  check(
+    'комнату со связью с учётом удалить нельзя, и сказано, со сколькими операциями',
+    has(refused, 'Связана с 1 операцией учёта — удалить нельзя'),
+    line(refused, 'Связана'),
+  )
+  check('и подтверждения удаления у неё нет', !has(refused, 'Да, удалить'), line(refused, 'Да, удалить'))
+
+  // Лето возвращается открытым: дальше по прогону она нужна как была.
+  await go('/debts')
+  await sleep(400)
+  await act(openClosed('Лето'))
+  await sleep(500)
+  await act(pressInRow('Лето', 'Открыть'))
+  await sleep(800)
+
+  // Комната без связей: заводим, даём ей событие, закрываем и удаляем.
+  await act(closedRooms)
+  await sleep(400)
+  await act(`byText('button', 'Завести комнату').click();`)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('.form input'), 'Дача');
+    [...document.querySelectorAll('.form input[type="checkbox"]')].forEach((box) => {
+      if (!box.checked) box.click();
+    });
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(800)
+  await act(`byText('a', 'Дача').click();`)
+  await sleep(800)
+  await act(`byText('button', 'Новое событие').click();`)
+  await sleep(400)
+  await act(`set(document.querySelector('.form input'), 'Шашлык');`)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(800)
+
+  await go('/debts')
+  await sleep(400)
+  await act(pressInRow('Дача', 'Закрыть'))
+  await sleep(800)
+  await act(openClosed('Дача'))
+  await sleep(500)
+  await act(`byText('a', 'Дача').click();`)
+  await sleep(800)
+  await act(unfoldRemove)
+  await sleep(600)
+  await act(`byText('button', 'Удалить комнату').click();`)
+  await sleep(500)
+  const asked = await screen()
+  check(
+    'удаление спрашивает второй раз и называет, что уйдёт',
+    has(asked, 'Удалить комнату «Дача», 1 событие, 0 трат, 0 переводов? Это не отменить'),
+    line(asked, 'Удалить комнату «'),
+  )
+  await act(`byText('button', 'Да, удалить').click();`)
+  await sleep(900)
+  const afterRemove = await screen()
+  const where = await run('location.hash')
+  check('после удаления — снова «Долги»', where === '#/debts', String(where))
+  check('удалённой комнаты в «Долгах» нет', !has(afterRemove, 'Дача'), line(afterRemove, 'Дача'))
+  check('а комната со связью осталась', has(afterRemove, 'Лето'), line(afterRemove, 'Лето'))
+
   // ── Капитал (Этап 4): снимки, курсы через доллар, отложенный платёж,
   //    заметки, «Новый снимок» строкой. Экран тестами не покрыть — только
   //    прогоном. Проверяются сами числа, а не слова рядом с ними: слова

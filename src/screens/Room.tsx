@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { db } from '../app/core.ts'
-import type { Currency, Person, RoomEvent, RoomSpend, RoomTransfer } from '../app/model.ts'
+import type { Currency, Person, Room as RoomRecord, RoomEvent, RoomSpend, RoomTransfer } from '../app/model.ts'
 import { eventsOf, roomBalances, settle, spendsOf, spentTotal, totalsOf, transfersOf } from '../modules/debts/balance.ts'
 import {
   createEvent,
@@ -11,18 +11,22 @@ import {
   nameOf,
   orderedIds,
   removed,
+  roomRemoval,
   updateEvent,
   updateSpend,
   type EventDraft,
   type SpendDraft,
 } from '../modules/debts/records.ts'
 import { sharesOf, spendProblem, splitMode, type SplitMode } from '../modules/debts/split.ts'
+import type { DebtsData } from '../modules/debts/summary.ts'
 import { roomText } from '../modules/debts/text.ts'
 import { useDebts } from '../modules/debts/useDebts.ts'
+import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useLedger } from '../modules/ledger/useLedger.ts'
 import { findCurrency, formatMoney, parseAmount, toMajor } from '../modules/money/money.ts'
 import { formatDate, plural, today } from '../shared/core/dates.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
+import { roomLinks } from '../summary/room-links.ts'
 import { roomById } from './Debts.tsx'
 
 /**
@@ -94,7 +98,86 @@ export function Room() {
           })
         }
       />
+
+      {room.closed && <RemoveRoom room={room} data={debts.data} />}
     </section>
+  )
+}
+
+// ─── Удаление закрытой комнаты ─────────────────────────────────────────────
+
+/**
+ * Удалить можно только закрытую комнату и только без связей с учётом (Р-57):
+ * иначе тихо поменялись бы итоги прошлых месяцев — доля операции стала бы
+ * «связь никуда не ведёт». Операции читаются лишь здесь, у закрытой комнаты:
+ * открытой они не нужны.
+ */
+function RemoveRoom({ room, data }: { room: RoomRecord; data: DebtsData }) {
+  const entries = useEntries()
+  const navigate = useNavigate()
+  const [asked, setAsked] = useState(false)
+
+  const links = entries.status === 'ready' ? roomLinks(room.id, entries.all, data) : null
+  const removal = roomRemoval(room, data)
+  const events = removal.events.length
+  const spends = removal.spends.length
+  const transfers = removal.transfers.length
+
+  async function remove() {
+    await db.putMany('roomSpends', removal.spends)
+    await db.putMany('roomTransfers', removal.transfers)
+    await db.putMany('roomEvents', removal.events)
+    await db.put('rooms', removal.room)
+    navigate('/debts')
+  }
+
+  return (
+    <Fold id="room:remove" title="Удаление" folded>
+      <p className="muted">
+        Комната закрыта. Удаляется вместе с событиями, тратами и переводами; люди и разовые долги остаются.
+      </p>
+      {entries.status === 'failed' && <p className="error">{entries.error}</p>}
+
+      {!asked && (
+        <div className="row">
+          <button type="button" disabled={links === null} onClick={() => setAsked(true)}>
+            Удалить комнату
+          </button>
+        </div>
+      )}
+
+      {asked && links !== null && links > 0 && (
+        <>
+          <p className="error">
+            Связана с {links} {plural(links, ['операцией', 'операциями', 'операциями'])} учёта — удалить нельзя:
+            их доля перестанет считаться. Сначала снимите связь в операциях.
+          </p>
+          <div className="row">
+            <button type="button" onClick={() => setAsked(false)}>
+              Понятно
+            </button>
+          </div>
+        </>
+      )}
+
+      {asked && links === 0 && (
+        <>
+          <p className="error">
+            Удалить комнату «{room.name}», {events} {plural(events, ['событие', 'события', 'событий'])}, {spends}{' '}
+            {plural(spends, ['трату', 'траты', 'трат'])}, {transfers}{' '}
+            {plural(transfers, ['перевод', 'перевода', 'переводов'])}? Это не отменить.
+          </p>
+          <div className="form__actions">
+            <button type="button" onClick={() => setAsked(false)}>
+              Отмена
+            </button>
+            <button type="button" className="btn--primary" onClick={() => void remove()}>
+              Да, удалить
+            </button>
+          </div>
+        </>
+      )}
+    </Fold>
   )
 }
 

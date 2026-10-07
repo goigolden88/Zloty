@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Loan, Person, Room } from '../../app/model.ts'
+import type { Loan, Person, Room, RoomEvent, RoomSpend, RoomTransfer } from '../../app/model.ts'
 import {
   createLoan,
   createPerson,
@@ -12,6 +12,7 @@ import {
   personProblem,
   removed,
   roomProblem,
+  roomRemoval,
   setClosed,
   sortedPeople,
   transferProblem,
@@ -229,5 +230,70 @@ describe('удаление мягкое — иначе запись воскре
     expect(gone.deleted).toBe(true)
     expect(gone.id).toBe(loan.id)
     expect(gone.updatedAt > loan.updatedAt).toBe(true)
+  })
+})
+
+describe('удаление комнаты (Р-57)', () => {
+  const room: Room = { id: 'room-1', updatedAt: at, name: 'Лето', currency: 'RUB', personIds: [anya.id, borya.id], closed: true }
+  const other: Room = { ...room, id: 'room-2', name: 'Зима' }
+  const event: RoomEvent = { id: 'event-1', updatedAt: at, roomId: 'room-1', name: 'Корт', date: '2026-08-21', personIds: [anya.id, borya.id] }
+  const gone: RoomEvent = { ...event, id: 'event-old', deleted: true }
+  const foreign: RoomEvent = { ...event, id: 'event-2', roomId: 'room-2' }
+  const spend: RoomSpend = {
+    id: 'spend-1',
+    updatedAt: at,
+    eventId: 'event-1',
+    date: '2026-08-21',
+    title: 'Мячи',
+    payerId: anya.id,
+    amount: 100000,
+    split: [{ personId: anya.id }, { personId: borya.id }],
+  }
+  const orphan: RoomSpend = { ...spend, id: 'spend-orphan', eventId: 'event-old' }
+  const foreignSpend: RoomSpend = { ...spend, id: 'spend-2', eventId: 'event-2' }
+  const transfer: RoomTransfer = { id: 'tr-1', updatedAt: at, roomId: 'room-1', date: '2026-08-22', fromId: borya.id, toId: anya.id, amount: 50000 }
+  const foreignTransfer: RoomTransfer = { ...transfer, id: 'tr-2', roomId: 'room-2' }
+  const loan: Loan = {
+    id: 'loan-1',
+    updatedAt: at,
+    personId: borya.id,
+    direction: 'lent',
+    money: { amount: 100, currency: 'RUB' },
+    date: '2026-08-10',
+  }
+
+  const data = {
+    people: [anya, borya],
+    rooms: [room, other],
+    roomEvents: [event, gone, foreign],
+    roomSpends: [spend, orphan, foreignSpend],
+    roomTransfers: [transfer, foreignTransfer],
+    loans: [loan],
+    repayments: [],
+  }
+
+  it('надгробие — комнате, её событиям, тратам и переводам', () => {
+    const out = roomRemoval(room, data)
+    expect(out.room).toMatchObject({ id: 'room-1', deleted: true })
+    expect(out.events.map((each) => each.id)).toEqual(['event-1'])
+    expect(out.spends.map((each) => each.id)).toEqual(['spend-1', 'spend-orphan'])
+    expect(out.transfers.map((each) => each.id)).toEqual(['tr-1'])
+    expect([...out.events, ...out.spends, ...out.transfers].every((each) => each.deleted)).toBe(true)
+  })
+
+  it('чужую комнату, людей и разовые долги не трогает', () => {
+    const out = roomRemoval(room, data)
+    const ids = [out.room, ...out.events, ...out.spends, ...out.transfers].map((each) => each.id)
+    for (const untouched of ['room-2', 'event-2', 'spend-2', 'tr-2', 'loan-1', anya.id, borya.id]) {
+      expect(ids).not.toContain(untouched)
+    }
+    // Исходные записи не изменены: надгробия — новые записи.
+    expect(room.deleted).toBeUndefined()
+    expect(loan.deleted).toBeUndefined()
+    expect(anya.deleted).toBeUndefined()
+  })
+
+  it('уже удалённое заново не пишется', () => {
+    expect(roomRemoval(room, data).events.map((each) => each.id)).not.toContain('event-old')
   })
 })

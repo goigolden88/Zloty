@@ -272,3 +272,40 @@ export function createRepayment(loanId: string, money: Money, date: string): Rep
 export function removed<T extends { deleted?: boolean }>(record: T): T {
   return { ...record, updatedAt: nowIso(), deleted: true }
 }
+
+export type RoomRemoval = {
+  room: Room
+  events: RoomEvent[]
+  spends: RoomSpend[]
+  transfers: RoomTransfer[]
+}
+
+/**
+ * Надгробия комнате и всему, что в ней (Р-57): событиям, тратам, переводам.
+ *
+ * Траты ищутся и под уже удалёнными событиями — иначе они остались бы живыми
+ * сиротами. Уже удалённое заново не пишется. Люди и разовые долги не комнаты —
+ * их это не касается. Можно ли удалять, решает экран: связи с учётом этот
+ * модуль не видит (условие 5 Р-01).
+ */
+export function roomRemoval(
+  room: Room,
+  data: {
+    roomEvents: readonly RoomEvent[]
+    roomSpends: readonly RoomSpend[]
+    roomTransfers: readonly RoomTransfer[]
+  },
+): RoomRemoval {
+  const events = data.roomEvents.filter((each) => each.roomId === room.id)
+  const eventIds = new Set(events.map((each) => each.id))
+  return {
+    room: removed(room),
+    events: live(events).map(removed),
+    spends: live(data.roomSpends)
+      .filter((each) => eventIds.has(each.eventId))
+      .map(removed),
+    transfers: live(data.roomTransfers)
+      .filter((each) => each.roomId === room.id)
+      .map(removed),
+  }
+}
