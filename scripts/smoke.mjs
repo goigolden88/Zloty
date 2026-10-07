@@ -1515,6 +1515,39 @@ async function scenario(profile) {
   check('после возврата остаётся 3 000, и видно, сколько вернули', has(repaid, '3 000'), line(repaid, '3 000'))
   check('возврат назван вместе с основанием', has(repaid, 'вернули'), line(repaid, 'вернули'))
 
+  // «Вернули всё» (Р-59): один тап — долг в «Закрытых»; «Открыть снова» —
+  // обратно с прежним остатком.
+  await act(`byText('button', 'Вернули всё').click();`)
+  await sleep(800)
+  const whole = await act(`
+    const box = startsWith('.fold__btn', 'Разовые долги').closest('section');
+    return JSON.stringify({
+      open: box.querySelectorAll('.loan-group').length,
+      closed: !![...box.querySelectorAll('.fold__btn')].find((each) => each.textContent.trim().startsWith('Закрытые')),
+    });
+  `)
+  const closedAll = whole ? JSON.parse(whole) : { open: -1, closed: false }
+  check('«Вернули всё» одним тапом закрывает долг', closedAll.open === 0 && closedAll.closed, String(whole))
+
+  await act(`
+    const box = startsWith('.fold__btn', 'Разовые долги').closest('section');
+    if (!byText('button', 'Открыть снова')) {
+      [...box.querySelectorAll('.fold__btn')].find((each) => each.textContent.trim().startsWith('Закрытые')).click();
+    }
+  `)
+  await sleep(400)
+  await act(`byText('button', 'Открыть снова').click();`)
+  await sleep(800)
+  const reopened = await act(`
+    const box = document.querySelector('.loan-group');
+    return box ? box.innerText : '';
+  `)
+  check(
+    '«Открыть снова» возвращает долг в открытые с прежним остатком',
+    has(reopened, '3 000') && has(reopened, 'вернули'),
+    String(reopened),
+  )
+
   // Комната: заводим на двоих, идём внутрь.
   await act(`if (!byText('button', 'Завести комнату')) startsWith('.fold__btn', 'Комнаты').click();`)
   await sleep(400)
