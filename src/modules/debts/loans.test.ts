@@ -170,6 +170,30 @@ describe('«Вернули всё» — возврат на весь остат�
   })
 })
 
+describe('двойной тап «Вернули всё» — один возврат: остаток по базе (Р-60)', () => {
+  const debt = loan({ id: 'loan-1' })
+
+  it('первый тап уже записал всё — по базе остаток ноль, второй возврат не пишется', () => {
+    const screen: Repayment[] = []
+    const first = repayAll(debt, screen, '2026-10-07')
+    expect(first?.money.amount).toBe(500000)
+    // Экран ещё не обновился, но в базе первый возврат уже есть.
+    expect(repayAll(debt, [first!], '2026-10-07')).toBeNull()
+  })
+
+  it('после частичного возврата «всё» пишет только остаток, а следом — ничего', () => {
+    const part = repayment({ id: 'r1', money: { amount: 150000, currency: 'RUB' } })
+    const whole = repayAll(debt, [part], '2026-10-07')
+    expect(whole?.money).toEqual({ amount: 350000, currency: 'RUB' })
+    expect(repayAll(debt, [part, whole!], '2026-10-07')).toBeNull()
+  })
+
+  it('возвраты других долгов в базе остаток не трогают', () => {
+    const other = repayment({ id: 'r1', loanId: 'loan-other', money: { amount: 500000, currency: 'RUB' } })
+    expect(repayAll(debt, [other], '2026-10-07')?.money.amount).toBe(500000)
+  })
+})
+
 describe('«Открыть снова» снимает последний возврат и только его (Р-59)', () => {
   const debt = loan({ id: 'loan-1' })
 

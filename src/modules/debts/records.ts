@@ -274,6 +274,11 @@ export function createRepayment(loanId: string, money: Money, date: string): Rep
  *
  * Обычный возврат, как при вводе суммы: остаток по-прежнему считается по
  * возвратам. `null` — возвращать нечего, долг уже закрыт.
+ *
+ * Возвраты экран передаёт прочитанными из базы перед самой записью, а не
+ * со своего экрана (Р-60): второй тап до обновления экрана, другое
+ * устройство или медленная запись видят уже записанный возврат — и второго
+ * не пишут.
  */
 export function repayAll(loan: Loan, repayments: readonly Repayment[], date: string): Repayment | null {
   const { left } = loanState(loan, repayments)

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Currency, Loan, Money, Person, Room } from '../app/model.ts'
@@ -273,9 +273,28 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
   const [paying, setPaying] = useState(false)
   const [amount, setAmount] = useState('')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const writing = useRef(false)
   const state = loanState(loan, data.repayments)
   const currency = findCurrency(ledger.currencies, loan.money.currency)
   const mine = signedLeft(loan, data.repayments).amount > 0
+
+  /**
+   * Одна запись за раз (Р-60). Флаг в `ref` ставится до первого `await`:
+   * два клика подряд приходят раньше, чем React перерисует кнопку
+   * погашенной, — `busy` здесь только видимая часть.
+   */
+  async function once(write: () => Promise<void>) {
+    if (writing.current) return
+    writing.current = true
+    setBusy(true)
+    try {
+      await write()
+    } finally {
+      writing.current = false
+      setBusy(false)
+    }
+  }
 
   async function repay() {
     if (!currency) return setError(`валюты ${loan.money.currency} нет в справочнике`)
@@ -284,14 +303,19 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
     if (parsed.amount > state.left) return setError(`осталось меньше: ${formatMoney({ amount: state.left, currency: loan.money.currency }, currency)}`)
 
     setError('')
-    await db.put('repayments', createRepayment(loan.id, { amount: parsed.amount, currency: loan.money.currency }, today()))
-    setAmount('')
-    setPaying(false)
+    await once(async () => {
+      await db.put('repayments', createRepayment(loan.id, { amount: parsed.amount, currency: loan.money.currency }, today()))
+      setAmount('')
+      setPaying(false)
+    })
   }
 
+  // Остаток — по возвратам из базы, а не с экрана (Р-60).
   async function repayWhole() {
-    const whole = repayAll(loan, data.repayments, today())
-    if (whole) await db.put('repayments', whole)
+    await once(async () => {
+      const whole = repayAll(loan, await db.getAll('repayments'), today())
+      if (whole) await db.put('repayments', whole)
+    })
   }
 
   return (
@@ -321,7 +345,7 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
               inputMode="decimal"
               autoFocus
             />
-            <button type="button" className="btn--primary" onClick={() => void repay()}>
+            <button type="button" className="btn--primary" disabled={busy} onClick={() => void repay()}>
               Записать возврат
             </button>
             <button type="button" onClick={() => { setPaying(false); setError('') }}>
@@ -334,7 +358,7 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
               Вернули
             </button>
             {/* Без подтверждения: ошибку тапа исправляет «Открыть снова» в «Закрытых» (Р-59). */}
-            <button type="button" onClick={() => void repayWhole()}>
+            <button type="button" disabled={busy} onClick={() => void repayWhole()}>
               Вернули всё
             </button>
             <button type="button" onClick={() => void db.put('loans', removed(loan))}>

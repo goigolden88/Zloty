@@ -1516,8 +1516,14 @@ async function scenario(profile) {
   check('возврат назван вместе с основанием', has(repaid, 'вернули'), line(repaid, 'вернули'))
 
   // «Вернули всё» (Р-59): один тап — долг в «Закрытых»; «Открыть снова» —
-  // обратно с прежним остатком.
-  await act(`byText('button', 'Вернули всё').click();`)
+  // обратно с прежним остатком. Тап двойной, без ожидания между кликами
+  // (Р-60): записаться должен один возврат — иначе «Открыть снова» ниже
+  // снимет лишь один из двух, и долг останется закрытым.
+  await act(`
+    const button = byText('button', 'Вернули всё');
+    button.click();
+    button.click();
+  `)
   await sleep(800)
   const whole = await act(`
     const box = startsWith('.fold__btn', 'Разовые долги').closest('section');
@@ -1543,7 +1549,7 @@ async function scenario(profile) {
     return box ? box.innerText : '';
   `)
   check(
-    '«Открыть снова» возвращает долг в открытые с прежним остатком',
+    '«Открыть снова» одним тапом возвращает долг в открытые с прежним остатком: после двойного тапа возврат один',
     has(reopened, '3 000') && has(reopened, 'вернули'),
     String(reopened),
   )
