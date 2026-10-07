@@ -239,6 +239,9 @@ const HELPERS = `
     [...document.querySelectorAll(tag)].find((el) => el.textContent.trim() === label);
   const startsWith = (tag, prefix) =>
     [...document.querySelectorAll(tag)].find((el) => el.textContent.trim().startsWith(prefix));
+  const unfoldAll = (root) => {
+    for (const each of root.querySelectorAll('.fold__btn[aria-expanded="false"]')) each.click();
+  };
 `
 
 /** Шаг сценария: тело выполняется на странице с помощниками выше. */
@@ -2056,7 +2059,41 @@ async function scenario(profile) {
     line(remind, '-го числа'),
   )
 
+  // Выгрузка для чтения — подгруппой «Копии данных», свёрнутой: кнопки
+  // видны только после раскрытия.
+  await act(`startsWith('.fold__btn', 'Копия данных').click();`)
+  await sleep(500)
+  const backup = await screen()
+  check(
+    'выгрузка для чтения свёрнута подгруппой',
+    has(backup, 'Выгрузка для чтения') && !has(backup, 'Весь учёт'),
+    line(backup, 'Выгрузка для чтения'),
+  )
+  await act(`unfoldAll(startsWith('.fold__btn', 'Копия данных').closest('section'));`)
+  await sleep(500)
+  const backupOpen = await screen()
+  check(
+    'и раскрывается кнопками выгрузки',
+    has(backupOpen, 'Весь учёт') && has(backupOpen, 'Этот месяц'),
+    line(backupOpen, 'Весь учёт'),
+  )
+
   await act(`startsWith('.fold__btn', 'О приложении').click();`)
+  await sleep(500)
+  const aboutFolded = (await screen()).replace(/ /g, ' ')
+  // Подгруппы свёрнуты, но не молча: в строке заголовка — версия схемы
+  // и дата последней записи «Что нового». Отчёт об ошибке виден сразу.
+  // Без учёта регистра: заголовки подгрупп — капителью.
+  check(
+    'в «О приложении» подгруппы свёрнуты, со сводкой',
+    /Что где лежит\s*· схема \d+/i.test(aboutFolded) &&
+      /Что нового\s*· \d{2}\.\d{2}\.\d{4}/i.test(aboutFolded) &&
+      has(aboutFolded, 'Установка') &&
+      !/Операции и итоги:\s*\d+/.test(aboutFolded),
+    [line(aboutFolded, 'Что где лежит'), line(aboutFolded, 'Что нового')].join(' · '),
+  )
+  check('отчёт об ошибке виден без раскрытия', has(aboutFolded, 'Отчёт — только техника'), line(aboutFolded, 'Отчёт'))
+  await act(`unfoldAll(startsWith('.fold__btn', 'О приложении').closest('section'));`)
   await sleep(500)
   const about = await screen()
   check('раздел «О приложении» разворачивается', has(about, 'Что где лежит'), line(about, 'Что где лежит'))
