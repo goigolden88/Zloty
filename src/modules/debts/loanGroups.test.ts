@@ -44,8 +44,8 @@ describe('разовые долги — группами по человеку (
       loan({ id: 'l3' }),
     ], [])
     expect(groups.map((each) => each.personId)).toEqual([BORYA, VERA])
-    expect(groups[0].loans.map((each) => each.id)).toEqual(['l1', 'l3'])
-    expect(groups[1].loans.map((each) => each.id)).toEqual(['l2'])
+    expect(groups[0]?.loans.map((each) => each.id)).toEqual(['l1', 'l3'])
+    expect(groups[1]?.loans.map((each) => each.id)).toEqual(['l2'])
   })
 
   it('порядок групп — «я», важные, остальные по алфавиту', () => {
@@ -73,7 +73,7 @@ describe('разовые долги — группами по человеку (
       loan({ id: 'l2', date: '2026-07-01' }),
       loan({ id: 'l3', date: '2026-08-20' }),
     ], [])
-    expect(groups[0].loans.map((each) => each.id)).toEqual(['l2', 'l3', 'l1'])
+    expect(groups[0]?.loans.map((each) => each.id)).toEqual(['l2', 'l3', 'l1'])
   })
 })
 
@@ -83,8 +83,8 @@ describe('итог группы — по валютам, тем же прави�
       loan({ id: 'l1' }),
       loan({ id: 'l2', personId: VERA, direction: 'borrowed', money: { amount: 150000, currency: 'RUB' } }),
     ], [repayment({ id: 'r1', loanId: 'l1' })])
-    expect(groups[0].amounts).toEqual([{ amount: 300000, currency: 'RUB' }])
-    expect(groups[1].amounts).toEqual([{ amount: -150000, currency: 'RUB' }])
+    expect(groups[0]?.amounts).toEqual([{ amount: 300000, currency: 'RUB' }])
+    expect(groups[1]?.amounts).toEqual([{ amount: -150000, currency: 'RUB' }])
   })
 
   it('валюты не складываются: две строки', () => {
@@ -92,7 +92,7 @@ describe('итог группы — по валютам, тем же прави�
       loan({ id: 'l1' }),
       loan({ id: 'l2', money: { amount: 10000, currency: 'USD' } }),
     ], [])
-    expect(groups[0].amounts).toEqual([
+    expect(groups[0]?.amounts).toEqual([
       { amount: 500000, currency: 'RUB' },
       { amount: 10000, currency: 'USD' },
     ])
@@ -103,8 +103,8 @@ describe('итог группы — по валютам, тем же прави�
       loan({ id: 'l1' }),
       loan({ id: 'l2', direction: 'borrowed', money: { amount: 200000, currency: 'RUB' } }),
     ], [])
-    expect(groups[0].amounts).toEqual([{ amount: 300000, currency: 'RUB' }])
-    expect(groups[0].loans).toHaveLength(2)
+    expect(groups[0]?.amounts).toEqual([{ amount: 300000, currency: 'RUB' }])
+    expect(groups[0]?.loans).toHaveLength(2)
   })
 })
 
@@ -118,8 +118,8 @@ describe('закрытые и удалённые долги в группы не
       loan({ id: 'l1' }),
       loan({ id: 'l2', money: { amount: 200000, currency: 'RUB' } }),
     ], [repayment({ id: 'r1', loanId: 'l2' })])
-    expect(groups[0].loans.map((each) => each.id)).toEqual(['l1'])
-    expect(groups[0].amounts).toEqual([{ amount: 500000, currency: 'RUB' }])
+    expect(groups[0]?.loans.map((each) => each.id)).toEqual(['l1'])
+    expect(groups[0]?.amounts).toEqual([{ amount: 500000, currency: 'RUB' }])
   })
 
   it('все долги человека закрыты — группы нет', () => {

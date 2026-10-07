@@ -1486,6 +1486,18 @@ async function scenario(profile) {
   check('разовый долг записан и назван суммой', has(lent, '5 000'), line(lent, '5 000'))
   check('и попал в итог «кто кому должен»', has(lent, 'должен вам'), line(lent, 'должен вам'))
 
+  // Разовые долги — группами по человеку, итог в заголовке группы (Р-58).
+  const group = await act(`
+    const box = document.querySelector('.loan-group');
+    return box ? JSON.stringify({ head: box.querySelector(':scope > .line').innerText, lines: box.querySelectorAll('.sub > li').length }) : '';
+  `)
+  const grouped = group ? JSON.parse(group) : { head: '', lines: 0 }
+  check(
+    'разовые долги — группой человека: имя и итог в заголовке, долг под ним',
+    has(grouped.head, 'Боря') && has(grouped.head, 'должен вам 5 000') && grouped.lines === 1,
+    String(group),
+  )
+
   // Возврат частями: остаток считается по возвратам, а не хранится.
   await act(`byText('button', 'Вернули').click();`)
   await sleep(400)
