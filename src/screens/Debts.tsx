@@ -274,6 +274,7 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
   const [amount, setAmount] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [sure, setSure] = useState(false)
   const writing = useRef(false)
   const state = loanState(loan, data.repayments)
   const currency = findCurrency(ledger.currencies, loan.money.currency)
@@ -352,6 +353,16 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
               Отмена
             </button>
           </>
+        ) : sure ? (
+          // Удалённый долг из приложения не вернуть — поэтому со второго нажатия.
+          <>
+            <button type="button" className="btn--danger" onClick={() => void db.put('loans', removed(loan))}>
+              Точно удалить
+            </button>
+            <button type="button" onClick={() => setSure(false)}>
+              Отмена
+            </button>
+          </>
         ) : (
           <>
             <button type="button" onClick={() => setPaying(true)}>
@@ -361,7 +372,7 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
             <button type="button" disabled={busy} onClick={() => void repayWhole()}>
               Вернули всё
             </button>
-            <button type="button" onClick={() => void db.put('loans', removed(loan))}>
+            <button type="button" onClick={() => setSure(true)}>
               Удалить
             </button>
           </>
