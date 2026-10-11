@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Currency, Loan, Money, Person, Room } from '../app/model.ts'
+import { byYearMonth, lastEventDate, type ByMonth } from '../modules/debts/byMonth.ts'
 import { loanGroups } from '../modules/debts/loanGroups.ts'
 import { lastRepayment, loanState, signedLeft } from '../modules/debts/loans.ts'
 import {
@@ -26,7 +27,7 @@ import { useDebts } from '../modules/debts/useDebts.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
 import { findCurrency, formatMoney, parseAmount } from '../modules/money/money.ts'
-import { formatDateLoose, today } from '../shared/core/dates.ts'
+import { formatDateLoose, monthName, today } from '../shared/core/dates.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
 
 /**
@@ -239,33 +240,99 @@ function Loans({ data, ledger }: { data: DebtsData; ledger: LedgerData }) {
 
       {closed.length > 0 && (
         <Fold id="debts:loans:closed" title="Закрытые" sub summary={<span className="muted">{closed.length}</span>} folded>
-          <ul className="plain">
-            {closed.map((loan) => {
-              const last = lastRepayment(loan, data.repayments)
-              return (
-                <li key={loan.id} className="line">
-                  <div className="line__main">
-                    {nameOf(data.people, loan.personId)}
-                    <span className="muted"> · {loan.direction === 'lent' ? 'давали' : 'брали'} · рассчитались</span>
-                  </div>
-                  <div className="row row--wrap">
-                    <span className="muted">
-                      {formatMoney(loan.money, findCurrency(ledger.currencies, loan.money.currency))}
-                    </span>
-                    {/* Снимает последний возврат — долг возвращается с прежним остатком (Р-59). */}
-                    {last && (
-                      <button type="button" onClick={() => void db.put('repayments', removed(last))}>
-                        Открыть снова
-                      </button>
-                    )}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+          {/* Долг стоит в месяце, когда взят или дан, а не когда рассчитались. */}
+          <ClosedByMonth
+            id="debts:loans:closed"
+            groups={byYearMonth(closed, (loan) => loan.date)}
+            render={(loan) => <ClosedLoanLine key={loan.id} loan={loan} data={data} ledger={ledger} />}
+          />
         </Fold>
       )}
     </Fold>
+  )
+}
+
+function ClosedLoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger: LedgerData }) {
+  const last = lastRepayment(loan, data.repayments)
+  return (
+    <li className="line">
+      <div className="line__main">
+        {nameOf(data.people, loan.personId)}
+        <span className="muted">
+          {' · '}
+          {loan.direction === 'lent' ? 'давали' : 'брали'} {formatDateLoose(loan.date)}
+          {last ? ` · рассчитались ${formatDateLoose(last.date)}` : ' · рассчитались'}
+        </span>
+      </div>
+      <div className="row row--wrap">
+        <span className="muted">{formatMoney(loan.money, findCurrency(ledger.currencies, loan.money.currency))}</span>
+        {/* Снимает последний возврат — долг возвращается с прежним остатком (Р-59). */}
+        {last && (
+          <button type="button" onClick={() => void db.put('repayments', removed(last))}>
+            Открыть снова
+          </button>
+        )}
+      </div>
+    </li>
+  )
+}
+
+/** «Октябрь», а не «октябрь»: название месяца стоит заголовком. */
+function monthTitle(month: string): string {
+  const name = monthName(Number(month.slice(5, 7)))
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : month
+}
+
+/**
+ * Закрытое по годам и месяцам — всё свёрнуто, пока не трогали; что раскрыто,
+ * помнит устройство. Ключи блоков — от `id` родителя, годом и месяцем.
+ */
+function ClosedByMonth<T>({
+  id,
+  groups,
+  render,
+}: {
+  id: string
+  groups: ByMonth<T>
+  render: (item: T) => ReactNode
+}) {
+  return (
+    <>
+      {groups.years.map((year) => (
+        <Fold
+          key={year.year}
+          id={`${id}:${year.year}`}
+          title={year.year}
+          sub
+          summary={<span className="muted">{year.count}</span>}
+          folded
+        >
+          {year.months.map((month) => (
+            <Fold
+              key={month.month}
+              id={`${id}:${month.month}`}
+              title={monthTitle(month.month)}
+              sub
+              summary={<span className="muted">{month.items.length}</span>}
+              folded
+            >
+              <ul className="plain">{month.items.map(render)}</ul>
+            </Fold>
+          ))}
+        </Fold>
+      ))}
+      {groups.undated.length > 0 && (
+        <Fold
+          id={`${id}:undated`}
+          title="Без даты"
+          sub
+          summary={<span className="muted">{groups.undated.length}</span>}
+          folded
+        >
+          <ul className="plain">{groups.undated.map(render)}</ul>
+        </Fold>
+      )}
+    </>
   )
 }
 
@@ -545,8 +612,11 @@ function Rooms({ data, ledger }: { data: DebtsData; ledger: LedgerData }) {
 
       {done.length > 0 && (
         <Fold id="debts:rooms:closed" title="Закрытые" sub summary={<span className="muted">{done.length}</span>} folded>
-          <ul className="plain">
-            {done.map((room) => (
+          {/* Своей даты у комнаты нет — по дню последнего события. */}
+          <ClosedByMonth
+            id="debts:rooms:closed"
+            groups={byYearMonth(done, (room) => lastEventDate(data.roomEvents, room.id))}
+            render={(room) => (
               <li key={room.id} className="line">
                 <div className="line__main">
                   <Link to={`/debts/${room.id}`}>{room.name}</Link>
@@ -557,8 +627,8 @@ function Rooms({ data, ledger }: { data: DebtsData; ledger: LedgerData }) {
                   </button>
                 </div>
               </li>
-            ))}
-          </ul>
+            )}
+          />
         </Fold>
       )}
     </Fold>
