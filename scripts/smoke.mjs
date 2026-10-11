@@ -1515,6 +1515,20 @@ async function scenario(profile) {
   check('после возврата остаётся 3 000, и видно, сколько вернули', has(repaid, '3 000'), line(repaid, '3 000'))
   check('возврат назван вместе с основанием', has(repaid, 'вернули'), line(repaid, 'вернули'))
 
+  // «Закрытые» разложены по годам и месяцам, всё свёрнуто: раскрывается
+  // свёрнутое внутри — сам блок, годы, месяцы, по проходу на уровень.
+  // Раскрытое не трогается: тап свернул бы его.
+  const unfoldClosed = async (parent) => {
+    for (let pass = 0; pass < 3; pass++) {
+      await act(`
+        const box = startsWith('.fold__btn', ${JSON.stringify(parent)}).closest('section');
+        const head = [...box.querySelectorAll('.fold__btn')].find((each) => each.textContent.trim() === 'Закрытые');
+        head.closest('section').querySelectorAll('.fold__btn[aria-expanded="false"]').forEach((each) => each.click());
+      `)
+      await sleep(400)
+    }
+  }
+
   // «Вернули всё» (Р-59): один тап — долг в «Закрытых»; «Открыть снова» —
   // обратно с прежним остатком. Тап двойной, без ожидания между кликами
   // (Р-60): записаться должен один возврат — иначе «Открыть снова» ниже
@@ -1535,13 +1549,16 @@ async function scenario(profile) {
   const closedAll = whole ? JSON.parse(whole) : { open: -1, closed: false }
   check('«Вернули всё» одним тапом закрывает долг', closedAll.open === 0 && closedAll.closed, String(whole))
 
-  await act(`
-    const box = startsWith('.fold__btn', 'Разовые долги').closest('section');
-    if (!byText('button', 'Открыть снова')) {
-      [...box.querySelectorAll('.fold__btn')].find((each) => each.textContent.trim().startsWith('Закрытые')).click();
-    }
+  await unfoldClosed('Разовые долги')
+  const closedLine = await act(`
+    const row = byText('button', 'Открыть снова').closest('li');
+    return row ? row.innerText : '';
   `)
-  await sleep(400)
+  check(
+    'закрытый долг — в своём месяце, с датой долга и датой расчёта',
+    /давали \d\d\.\d\d\.\d{4} · рассчитались \d\d\.\d\d\.\d{4}/.test(String(closedLine)),
+    String(closedLine),
+  )
   await act(`byText('button', 'Открыть снова').click();`)
   await sleep(800)
   const reopened = await act(`
@@ -1726,12 +1743,6 @@ async function scenario(profile) {
   const closedRooms = `
     if (!byText('button', 'Завести комнату')) startsWith('.fold__btn', 'Комнаты').click();
   `
-  const openClosed = (name) => `
-    if (!byText('a', ${JSON.stringify(name)})) {
-      const box = startsWith('.fold__btn', 'Комнаты').closest('section');
-      [...box.querySelectorAll('.fold__btn')].find((each) => each.textContent.trim() === 'Закрытые').click();
-    }
-  `
   const pressInRow = (name, label) => `
     const row = [...document.querySelectorAll('li.line')].find((el) =>
       el.textContent.includes(${JSON.stringify(name)}) &&
@@ -1753,8 +1764,7 @@ async function scenario(profile) {
   await sleep(400)
   await act(pressInRow('Лето', 'Закрыть'))
   await sleep(800)
-  await act(openClosed('Лето'))
-  await sleep(500)
+  await unfoldClosed('Комнаты')
   await act(`byText('a', 'Лето').click();`)
   await sleep(800)
   await act(unfoldRemove)
@@ -1772,8 +1782,7 @@ async function scenario(profile) {
   // Лето возвращается открытым: дальше по прогону она нужна как была.
   await go('/debts')
   await sleep(400)
-  await act(openClosed('Лето'))
-  await sleep(500)
+  await unfoldClosed('Комнаты')
   await act(pressInRow('Лето', 'Открыть'))
   await sleep(800)
 
@@ -1804,8 +1813,7 @@ async function scenario(profile) {
   await sleep(400)
   await act(pressInRow('Дача', 'Закрыть'))
   await sleep(800)
-  await act(openClosed('Дача'))
-  await sleep(500)
+  await unfoldClosed('Комнаты')
   await act(`byText('a', 'Дача').click();`)
   await sleep(800)
   await act(unfoldRemove)
