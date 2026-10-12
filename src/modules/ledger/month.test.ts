@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Currency, Entry, Rate } from '../../app/model.ts'
+import type { Account, Currency, Entry, Rate } from '../../app/model.ts'
 import {
   DAYS_IN_MONTH,
   growthByCategory,
@@ -12,6 +12,7 @@ import {
   overUsual,
   OVER_USUAL_MIN,
   perMonth,
+  provisional,
   savingsRate,
   SAVINGS_TIMES_LIMIT,
   toDate,
@@ -406,6 +407,43 @@ describe('норма сбережений читается (Р-23)', () => {
   it('дохода нет — доли нет, и это не ноль', () => {
     const none = monthReport(data([entry({ kind: 'expense', amount: 500000, date: '2026-09-10' })]), '2026-09')
     expect(savingsRate(none)).toEqual({ kind: 'none' })
+  })
+})
+
+describe('«Отложено» предварительно (Р-62)', () => {
+  const blue: Account = {
+    id: 'a1',
+    updatedAt: AT,
+    name: 'Синий банк',
+    currency: 'RUB',
+    kind: 'savings',
+    loadedThrough: '2026-10-10',
+    order: 0,
+  }
+  const yellow: Account = { ...blue, id: 'a2', name: 'Жёлтый банк', loadedThrough: '2026-10-03', pausedSince: '2026-10-03' }
+
+  it('месяц кончился и записан целиком — число окончательное', () => {
+    expect(provisional(monthShare('2026-09', '2026-10-12', '2026-10-10'), null, [])).toEqual([])
+  })
+
+  it('месяц ещё идёт — предварительно, даже если всё загружено', () => {
+    expect(provisional(monthShare('2026-10', '2026-10-12', '2026-10-12'), null, [])).toEqual(['месяц ещё идёт'])
+  })
+
+  it('выписки отстали — названы день и счёт', () => {
+    const recorded = { day: '2026-10-10', account: blue }
+    const reasons = provisional(monthShare('2026-10', '2026-10-12', '2026-10-10'), recorded, [])
+    expect(reasons).toContain('записи доведены по 10.10.2026 — по счёту «Синий банк»')
+  })
+
+  // Остальные счета дошли до конца сентября, а счёта на паузе в нём не хватает.
+  it('счёт на паузе делает предварительным и кончившийся месяц', () => {
+    const reasons = provisional(monthShare('2026-09', '2026-10-12', '2026-10-10'), null, [{ ...yellow, pausedSince: '2026-09-20' }])
+    expect(reasons).toEqual(['без счёта «Жёлтый банк» — он на паузе с 20.09.2026'])
+  })
+
+  it('месяц не начался — так и сказано', () => {
+    expect(provisional(monthShare('2026-11', '2026-10-12'), null, [])).toEqual(['месяц ещё не начался'])
   })
 })
 

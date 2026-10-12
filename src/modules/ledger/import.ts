@@ -1038,6 +1038,10 @@ function turnoverOn(entries: readonly Entry[], check: Check): { income: number; 
  *
  * `pending` — счета, заведённые этим же файлом: отметка должна лечь на них,
  * а не на прежнюю копию из базы, иначе одна из двух записей потеряется.
+ *
+ * Сдвинутая отметка снимает со счёта паузу (Р-62): банк ожил, выписка
+ * пришла — счёт снова задаёт срок месяца. Отметка не сдвинулась — пауза
+ * остаётся: старая выписка поверх свежей не значит, что банк ожил.
  */
 export function loadedThroughUpdates(
   loaded: readonly { accountId: string; through: string }[],
@@ -1053,7 +1057,9 @@ export function loadedThroughUpdates(
       data.accounts.find((each) => each.id === accountId)
     if (!current || current.ledgerOnly) continue
     if (current.loadedThrough !== undefined && current.loadedThrough >= through) continue
-    result.set(accountId, { ...current, loadedThrough: through, updatedAt: nowIso() })
+    const next: Account = { ...current, loadedThrough: through, updatedAt: nowIso() }
+    delete next.pausedSince
+    result.set(accountId, next)
   }
 
   return [...result.values()]

@@ -5,6 +5,7 @@ import {
   active,
   activeCategories,
   archived,
+  canPause,
   categoryProblem,
   cleanName,
   createAccount,
@@ -164,6 +165,32 @@ describe('счета', () => {
     expect(now.archived).toBe(true)
     expect(now.name).toBe('Синий банк')
     expect(now.id).toBe('a')
+  })
+
+  // Отметку пишет только импорт (Р-26): правка названия её не стирает.
+  it('правка счёта сохраняет «выписка доведена по»', () => {
+    const was = account({ id: 'a', name: 'Синий банк', loadedThrough: '2026-10-03' })
+    const now = updateAccount(was, { name: 'Синий', currency: 'RUB', kind: 'savings' })
+    expect(now.loadedThrough).toBe('2026-10-03')
+  })
+
+  it('пауза начинается с дня загруженной выписки и при пересохранении не сдвигается (Р-62)', () => {
+    const was = account({ id: 'a', name: 'Синий банк', loadedThrough: '2026-10-03' })
+    const paused = updateAccount(was, { name: 'Синий банк', currency: 'RUB', kind: 'savings', paused: true })
+    expect(paused.pausedSince).toBe('2026-10-03')
+    const again = updateAccount({ ...paused, loadedThrough: '2026-10-05' }, { name: 'Синий', currency: 'RUB', kind: 'savings', paused: true })
+    expect(again.pausedSince).toBe('2026-10-03')
+    const off = updateAccount(paused, { name: 'Синий банк', currency: 'RUB', kind: 'savings' })
+    expect('pausedSince' in off).toBe(false)
+  })
+
+  it('на паузу не ставится счёт без выписки, счёт истории и архивный (Р-62)', () => {
+    const draft = { name: 'Наличные', currency: 'RUB', kind: 'savings' as const, paused: true }
+    expect(updateAccount(account({ id: 'a', name: 'Наличные' }), draft).pausedSince).toBeUndefined()
+    const history = account({ id: 'b', name: 'Таблица', loadedThrough: '2025-12-31' })
+    expect(updateAccount(history, { ...draft, ledgerOnly: true }).pausedSince).toBeUndefined()
+    expect(canPause(account({ id: 'c', name: 'Старый', loadedThrough: '2026-01-31', archived: true }))).toBe(false)
+    expect(canPause(account({ id: 'd', name: 'Синий', loadedThrough: '2026-10-03' }))).toBe(true)
   })
 
   it('ledgerOnly не пишется ложью: его либо нет, либо true', () => {

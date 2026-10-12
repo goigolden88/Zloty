@@ -128,6 +128,7 @@ describe('расход месяца с особым периодом', () => {
         categories: { rows: [], months: 0 },
         over: overUsual(shown, '2026-09'),
         recorded: null,
+        paused: [],
         excluded: 0,
         due: [],
         names: new Map(),

@@ -22,9 +22,10 @@
  *   или по особому периоду, одной функцией `isSpecial` (Р-55).
  */
 
-import { daysBetween, formatMonth, lastDayOf, monthOf, periodDays } from '../../shared/core/dates.ts'
-import type { Currency, Entry, Money, Rate, SpecialPeriod } from '../../app/model.ts'
+import { daysBetween, formatDate, formatMonth, lastDayOf, monthOf, periodDays } from '../../shared/core/dates.ts'
+import type { Account, Currency, Entry, Money, Rate, SpecialPeriod } from '../../app/model.ts'
 import { convert } from '../money/rates.ts'
+import type { Recorded } from './entries.ts'
 import { isSpecial, liveSpecials, specialPeriodOf } from './specials.ts'
 
 /** Сколько прошлых месяцев берёт «обычный месяц». Число видно в основании и в справке. */
@@ -278,6 +279,37 @@ function daysOf(month: string, through: string, total: number): number {
 export function toDate(amount: number, running: Running | null): number {
   if (!running || running.total <= 0) return amount
   return Math.round((amount * running.passed) / running.total)
+}
+
+/**
+ * Почему «Отложено» месяца предварительное (Р-62) — причины словами.
+ * Пустой список — месяц записан до конца, и число окончательное.
+ *
+ * Месяц, записанный не до конца, — любой: ещё идёт, выписки отстали или
+ * счёт на паузе. В каждом случае отложенное ещё изменится, и «цель взята»
+ * без оговорки читалась бы как итог. `paused` — счета на паузе, которых
+ * не хватает именно этому месяцу (`pausedIn`).
+ */
+export function provisional(
+  running: Running | null,
+  recorded: Recorded | null,
+  paused: readonly Account[],
+): string[] {
+  if (running !== null && running.elapsed === 0) return ['месяц ещё не начался']
+
+  const out: string[] = []
+  if (running?.going) out.push('месяц ещё идёт')
+  if (running !== null && running.passed < running.elapsed) {
+    out.push(
+      recorded === null
+        ? 'записи доведены не по сегодня'
+        : `записи доведены по ${formatDate(recorded.day)} — по счёту «${recorded.account.name}»`,
+    )
+  }
+  for (const each of paused) {
+    out.push(`без счёта «${each.name}» — он на паузе с ${formatDate(each.pausedSince ?? '')}`)
+  }
+  return out
 }
 
 // ─── Отчёт месяца ──────────────────────────────────────────────────────────

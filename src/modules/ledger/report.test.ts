@@ -33,6 +33,7 @@ function input(entries: Entry[], over: Partial<ReportInput> = {}): ReportInput {
     categories: { rows: [], months: 0 },
     over: overUsual(data, '2026-09'),
     recorded: null,
+    paused: [],
     excluded: 0,
     due: [],
     names: new Map([['food', 'Еда']]),
@@ -154,6 +155,28 @@ describe('отчёт месяца (Р-29)', () => {
     expect(text).toContain('Месяц ещё идёт: прошло 22 из 30')
     expect(text).toContain('по счёту «Синий банк»')
     expect(text).toContain('Расход за последние 4 дня неизвестен')
+  })
+
+  // Беседа экрана не видит: без строки она объяснит пропавшие траты
+  // привычками человека (Р-62).
+  it('счёт на паузе назван, а «Отложено» — предварительное', () => {
+    const data: MonthData = { entries: list, currencies: [RUB], rates: [], base: 'RUB' }
+    const yellow = {
+      id: 'a2',
+      updatedAt: AT,
+      name: 'Жёлтый банк',
+      currency: 'RUB',
+      kind: 'savings' as const,
+      order: 0,
+      loadedThrough: '2026-09-15',
+      pausedSince: '2026-09-15',
+    }
+    const text = flat(
+      monthReportText(input(list, { report: monthReport(data, '2026-09', '2026-10-12', '2026-10-10'), paused: [yellow] })),
+    )
+    expect(text).toContain('Счёт «Жёлтый банк» на паузе — банк недоступен: его операций после 15.09.2026 нет')
+    expect(text).toContain('Расход и доход по счёту «Жёлтый банк» после 15.09.2026 неизвестны')
+    expect(text).toContain('(предварительно: без счёта «Жёлтый банк» — он на паузе с 15.09.2026)')
   })
 
   it('вопрос стоит в конце, после чисел', () => {

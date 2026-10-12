@@ -206,6 +206,8 @@ export type AccountDraft = {
   currency: CurrencyCode
   kind: Account['kind']
   ledgerOnly?: boolean
+  /** «Банк недоступен — счёт на паузе» (Р-62). Ставится, только если `canPause`. */
+  paused?: boolean
 }
 
 export function accountProblem(
@@ -227,10 +229,31 @@ export function createAccount(list: readonly Account[], draft: AccountDraft): Ac
   return fillAccount(draft, { id: ulid(), updatedAt: nowIso(), order: nextOrder(list) })
 }
 
+/**
+ * Правка счёта из формы.
+ *
+ * Отметку «выписка доведена по» форма не знает и не трогает (Р-26): её
+ * пишет только импорт, и правка названия не должна её стирать.
+ *
+ * Пауза (Р-62) начинается с дня, по который выписка уже загружена, и при
+ * повторном сохранении этот день не сдвигается. Счёт истории на паузу
+ * не ставится: срока он не задаёт и так.
+ */
 export function updateAccount(record: Account, draft: AccountDraft): Account {
   const next = fillAccount(draft, { id: record.id, updatedAt: nowIso(), order: record.order })
+  if (record.loadedThrough) next.loadedThrough = record.loadedThrough
   if (record.archived) next.archived = true
+  if (draft.paused && canPause(next)) next.pausedSince = record.pausedSince ?? next.loadedThrough
   return next
+}
+
+/**
+ * Можно ли поставить счёт на паузу (Р-62): только тот, что задаёт срок
+ * месяца, — с загруженной выпиской, не счёт истории и не архивный.
+ * Наличным и ручному вводу срок не задаётся и так.
+ */
+export function canPause(account: Account): boolean {
+  return Boolean(account.loadedThrough) && !account.ledgerOnly && !account.archived && !account.deleted
 }
 
 function fillAccount(draft: AccountDraft, base: { id: string; updatedAt: string; order: number }): Account {

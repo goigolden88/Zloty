@@ -21,7 +21,7 @@
  * выписке не будет, — наличные; иначе выйдет дубль (Р-12, «Цена», п. 2).
  */
 
-import { formatDate, nowIso } from '../../shared/core/dates.ts'
+import { formatDate, lastDayOf, nowIso } from '../../shared/core/dates.ts'
 import { ulid } from '../../shared/core/id.ts'
 import type { Account, Currency, Entry } from '../../app/model.ts'
 import { parseAmount } from '../money/money.ts'
@@ -370,5 +370,38 @@ export type Recorded = {
   day: string
   /** Счёт, чья выписка отстала сильнее всех: его и надо догрузить. */
   account: Account
+}
+
+/** Срок месяца без счетов на паузе — и сами эти счета (Р-62). */
+export type MonthRecorded = {
+  /** Как у `recordedThrough`, но без счетов на паузе. Null — срока не задаёт ни один счёт. */
+  recorded: Recorded | null
+  /** Счета на паузе, которые срок задавали бы: их называют рядом с числами. */
+  paused: Account[]
+}
+
+/**
+ * Срок «Месяца» и отчёта (Р-62): то же правило, что у `recordedThrough`,
+ * но счёт на паузе — банк недоступен — его не задаёт. Иначе один банк,
+ * недоступный неделями, держит весь месяц: сравнения урезаны до его дня,
+ * а следующий месяц — «записей нет вовсе».
+ *
+ * Молча счёт не выпадает: он возвращается списком, и «Месяц» называет его
+ * строкой с основанием. Срез итогов берёт `recordedThrough`, как прежде.
+ */
+export function monthRecorded(accounts: readonly Account[]): MonthRecorded {
+  const counted = accounts.filter((each) => !each.deleted && !each.archived && !each.ledgerOnly && each.loadedThrough)
+  const paused = counted.filter((each) => each.pausedSince)
+  return { recorded: recordedThrough(counted.filter((each) => !each.pausedSince)), paused }
+}
+
+/**
+ * Счета на паузе, которых не хватает именно этому месяцу: пауза началась
+ * раньше его последнего дня. Месяц, целиком загруженный до паузы, о ней
+ * не говорит — в нём всё есть.
+ */
+export function pausedIn(paused: readonly Account[], month: string): Account[] {
+  const last = lastDayOf(month)
+  return paused.filter((each) => each.pausedSince !== undefined && each.pausedSince < last)
 }
 

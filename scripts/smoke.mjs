@@ -1189,6 +1189,90 @@ async function scenario(profile) {
     line(usual, 'встречалась в'),
   )
 
+  // ── Счёт на паузе (Р-62): банк «Зелёного» недоступен — срок месяца он
+  //    больше не держит, но называется рядом с числами. После проверки
+  //    пауза снимается руками: дальше прогон ждёт прежнего срока.
+  const pauseGreen = async (on) => {
+    await go('/books')
+    await act(`if (!byText('b', 'Зелёный банк')) startsWith('.fold__btn', 'Счета').click();`)
+    await sleep(300)
+    await act(`
+      const row = byText('b', 'Зелёный банк').closest('li');
+      [...row.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Изменить').click();
+    `)
+    await sleep(400)
+    await act(`
+      const label = [...document.querySelectorAll('label')].find((el) => el.textContent.includes('Банк недоступен'));
+      if (label.querySelector('input').checked !== ${on}) label.querySelector('input').click();
+    `)
+    await sleep(300)
+    await act(`
+      const form = [...document.querySelectorAll('label')].find((el) => el.textContent.includes('Банк недоступен')).closest('.form');
+      [...form.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Сохранить').click();
+    `)
+    await sleep(700)
+  }
+
+  await go('/books')
+  await act(`if (!byText('b', 'Наличные')) startsWith('.fold__btn', 'Счета').click();`)
+  await sleep(300)
+  await act(`
+    const row = byText('b', 'Наличные')?.closest('li');
+    if (row) [...row.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Изменить').click();
+  `)
+  await sleep(400)
+  const cashForm = await run(`
+    (() => {
+      const form = document.querySelector('.form');
+      return {
+        name: form?.querySelector('input')?.value ?? null,
+        pause: [...document.querySelectorAll('label')].some((el) => el.textContent.includes('Банк недоступен')),
+      };
+    })()
+  `)
+  check(
+    'счёту без выписок пауза не предлагается',
+    cashForm?.name === 'Наличные' && cashForm.pause === false,
+    JSON.stringify(cashForm),
+  )
+  await act(`byText('button', 'Отмена').click();`)
+  await sleep(300)
+
+  await pauseGreen(true)
+  const pausedBooks = await screen()
+  check('у счёта на паузе в списке — день паузы', has(pausedBooks, 'на паузе с 10.09.2026'), line(pausedBooks, 'на паузе'))
+
+  await go('/')
+  await sleep(700)
+  const pausedMonth = await screen()
+  check(
+    'счёт на паузе срок месяца не держит',
+    firstOfMonth || !has(pausedMonth, 'по счёту «Зелёный банк»'),
+    line(pausedMonth, 'доведены'),
+  )
+  check(
+    'и назван рядом с числами, а не пропал молча',
+    has(pausedMonth, 'Без счёта «Зелёный банк» — на паузе: его операций после 10.09.2026 нет'),
+    line(pausedMonth, 'Без счёта'),
+  )
+  check(
+    '«Отложено» в неполном месяце — предварительно, с причиной',
+    firstOfMonth || has(pausedMonth, 'предварительно: месяц ещё идёт'),
+    line(pausedMonth, 'предварительно'),
+  )
+
+  await pauseGreen(false)
+  const resumedBooks = await screen()
+  check('пауза снимается руками', !has(resumedBooks, 'на паузе с'), line(resumedBooks, 'Зелёный банк'))
+  await go('/')
+  await sleep(700)
+  const resumed = await screen()
+  check(
+    'и срок снова по отставшему счёту',
+    firstOfMonth || (has(resumed, 'по счёту «Зелёный банк»') && !has(resumed, 'Без счёта «Зелёный банк»')),
+    line(resumed, 'доведены'),
+  )
+
   // ── Доход, которого ждали и не дождались (Р-23). Доходная регулярная,
   //    не отмеченная за месяц, — не догадка о полноте данных, а факт:
   //    шаблон сам сказал, чего ждать. Категория «Кэшбэк» к этому месту уже

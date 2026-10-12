@@ -772,6 +772,19 @@ describe('отметка «выписка доведена по» (Р-26)', () =
     expect(marks[0]?.loadedThrough).toBe('2026-09-22')
   })
 
+  // Банк ожил, выписка пришла — счёт снова задаёт срок месяца (Р-62).
+  it('сдвинутая отметка снимает паузу', () => {
+    const paused: Account = { ...bank, loadedThrough: '2026-10-03', pausedSince: '2026-10-03' }
+    const marks = loadedThroughUpdates([{ accountId: bank.id, through: '2026-10-11' }], data([paused]))
+    expect(marks[0]?.loadedThrough).toBe('2026-10-11')
+    expect(marks[0] && 'pausedSince' in marks[0]).toBe(false)
+  })
+
+  it('старая выписка поверх свежей паузу не снимает: отметка не сдвинулась', () => {
+    const paused: Account = { ...bank, loadedThrough: '2026-10-03', pausedSince: '2026-10-03' }
+    expect(loadedThroughUpdates([{ accountId: bank.id, through: '2026-10-03' }], data([paused]))).toEqual([])
+  })
+
   it('счёт истории отметки не получает: выписок на него не грузят', () => {
     const table: Account = { ...bank, ledgerOnly: true }
     expect(loadedThroughUpdates([{ accountId: bank.id, through: '2026-09-18' }], data([table]))).toEqual([])
