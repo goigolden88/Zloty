@@ -111,7 +111,7 @@ export function demo(day: DateStr): DemoData {
     { ...base(), code: SECOND, name: 'Доллар', decimals: 2, order: 1 },
   ]
 
-  const bank: Account = { ...base(), name: 'Синий банк', currency: BASE, kind: 'savings', order: 0 }
+  const bank: Account = { ...base(), name: 'Северный банк', currency: BASE, kind: 'savings', order: 0 }
   const cash: Account = { ...base(), name: 'Наличные', currency: BASE, kind: 'savings', order: 1 }
   const broker: Account = { ...base(), name: 'Брокерский счёт', currency: SECOND, kind: 'investment', order: 2 }
   const accounts = [bank, cash, broker]
@@ -239,7 +239,7 @@ export function demo(day: DateStr): DemoData {
     { ...base(), eventId: event.id, date: event.date, title: 'Аренда беседки', payerId: anya.id, amount: kop(3000), split: everyone },
   ]
   const roomTransfers: RoomTransfer[] = [
-    { ...base(), roomId: room.id, date: addDays(day, -15), fromId: borya.id, toId: me.id, amount: kop(2000), note: 'на Синий банк' },
+    { ...base(), roomId: room.id, date: addDays(day, -15), fromId: borya.id, toId: me.id, amount: kop(2000), note: 'на Северный банк' },
   ]
 
   return {

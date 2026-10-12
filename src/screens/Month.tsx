@@ -79,7 +79,9 @@ export function Month() {
   const specials = useSpecials()
   const [month, setMonth] = useState(() => monthOf(today()))
 
-  if (whatsNew.show.length > 0) return <WhatsNew changes={whatsNew.show} onDone={whatsNew.dismiss} />
+  // В демо «Что нового» не показывается: демо-база с записями, но без
+  // отметки о прочитанном, и вместо «Месяца» открылся бы список изменений.
+  if (!db.demo && whatsNew.show.length > 0) return <WhatsNew changes={whatsNew.show} onDone={whatsNew.dismiss} />
 
   // Без периодов особый расход посчитался бы только по флагу (Р-55):
   // число вышло бы уверенным и другим, поэтому их ждут, как и записи.
