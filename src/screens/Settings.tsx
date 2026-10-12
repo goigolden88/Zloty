@@ -6,6 +6,7 @@ import { SCHEMA_VERSION, SYNCED_STORES } from '../app/model.ts'
 import { monthPeriod, monthOf, formatDate, formatMonth, today } from '../shared/core/dates.ts'
 import { markdownExport } from '../registry.ts'
 import { backupNote, backupSummary } from '../shared/ui/backup.ts'
+import { DemoSettings } from '../shared/ui/Demo.tsx'
 import { Fold } from '../shared/ui/Fold.tsx'
 import { InstallNote } from '../shared/ui/Install.tsx'
 import { ReportBug } from '../shared/ui/Report.tsx'
@@ -51,9 +52,10 @@ function describe(error: unknown): string {
  * Настройки разделами, свёрнутыми: в них заходят за чем-то одним, и экран
  * читается как оглавление. Устройство — «Трапезы» и «Дневников».
  *
- * Разделов четыре: «Синхронизация», «Копия данных», «Напоминания»
- * и «О приложении». Напоминания появились вместе с тем, о чём напоминать
- * (Этап 1, п. 9): месяц, который не внесён, и регулярные, которых ещё нет.
+ * Разделов пять: «Синхронизация», «Копия данных», «Напоминания»,
+ * «Демо-данные» и «О приложении». Напоминания появились вместе с тем, о чём
+ * напоминать (Этап 1, п. 9): месяц, который не внесён, и регулярные, которых
+ * ещё нет. В демо «Синхронизации» нет — её прячет ядро.
  */
 export function Settings() {
   const [state, setState] = useState<State>({ status: 'loading' })
@@ -86,6 +88,9 @@ export function Settings() {
       <Backup onChanged={load} />
 
       <Reminders />
+
+      {/* Демо-данные (Я-44 «FamilyCore»): вход в любой момент, в демо — выход. */}
+      <DemoSettings />
 
       <About state={state} />
     </>
