@@ -143,6 +143,12 @@ const waiting = new Map()
  */
 let ratesReply = null
 
+/**
+ * Сколько запросов к GitHub ушло со страницы: демо не должно сделать ни
+ * одного (Я-44 «FamilyCore»). Считается по событиям сети — `Network.enable`.
+ */
+let githubHits = 0
+
 function connect(url) {
   socket = new WebSocket(url)
 
@@ -171,6 +177,10 @@ function connect(url) {
         void send('Fetch.continueRequest', { requestId })
       }
       return
+    }
+
+    if (message.method === 'Network.requestWillBeSent' && message.params.request.url.includes('github.com')) {
+      githubHits++
     }
 
     if (message.method === 'Runtime.exceptionThrown') {
@@ -326,6 +336,32 @@ async function scenario(profile) {
 
   // ── Приветствие первого запуска: база пуста, значит оно на месте.
   check('приветствие показано на пустой базе', has(start, 'С чего начать'), line(start, 'С чего начать'))
+
+  // ── Предложение демо (Я-45 «FamilyCore»): пустая база, токена нет — один
+  //    раз. «Нет, начну своё» — и после перезапуска его нет, приветствие на месте.
+  // Заголовки — капителью: `innerText` отдаёт их прописными, сравнение — без регистра.
+  const offered = await waitFor(`document.body.innerText.toLowerCase().includes('посмотреть на демо-данных?')`)
+  const offer = await screen()
+  check(
+    'на пустой базе без токена — предложение демо — Я-45 «FamilyCore»',
+    offered && has(offer, 'Открыть демо') && has(offer, 'Нет, начну своё'),
+    line(offer, 'демо'),
+  )
+  await act(`byText('button', 'Нет, начну своё').click();`)
+  await sleep(700)
+  await send('Page.navigate', { url: APP })
+  await waitFor(
+    `(document.querySelector('#root')?.innerText ?? '').replace(/ /g, ' ').toLowerCase().includes('с чего начать')`,
+    20_000,
+  )
+  await sleep(1000)
+  const declined = await screen()
+  check(
+    '«Нет, начну своё» — предложение демо больше не показывается — Я-45 «FamilyCore»',
+    !has(declined, 'Посмотреть на демо-данных?') && has(declined, 'С чего начать'),
+    line(declined, 'демо'),
+  )
+
   await act(`byText('button', 'Понятно').click();`)
   await sleep(700)
   const afterWelcome = await screen()
@@ -2172,6 +2208,8 @@ async function scenario(profile) {
     [line(about, 'Версия схемы данных'), line(about, 'Заметки к капиталу'), line(about, 'Особые периоды')].join(' · '),
   )
 
+  await demoScenario()
+
   // ── Незнакомый адрес открывает приложение, а не пустоту.
   await go('/nope')
   const unknown = await screen()
@@ -2189,6 +2227,106 @@ async function scenario(profile) {
     `работник ${controlled ? 'управляет' : 'не управляет'} страницей`,
   )
   await offline(false)
+}
+
+/**
+ * Демо-данные (Я-44, Я-45 «FamilyCore»): вход из настроек на устройстве
+ * со своими записями; в демо — полоса, выдуманные месяц, капитал и долги,
+ * своих записей не видно, синхронизации нет и к GitHub не уходит ни один
+ * запрос; «Выйти» спрашивает, отказ оставляет в демо; выход возвращает
+ * свои записи и стирает демо-базу.
+ */
+async function demoScenario() {
+  const bar = 'Демо: данные выдуманные'
+  const onPage = (text) => `document.body.innerText.toLowerCase().includes(${JSON.stringify(text.toLowerCase())})`
+  await send('Network.enable')
+
+  await go('/capital')
+  const own = await screen()
+  check('до демо — свои счета на месте', has(own, 'Синий банк') && !has(own, bar), line(own, 'Синий банк'))
+
+  await go('/settings')
+  await act(`startsWith('.fold__btn', 'Демо-данные').click();`)
+  await sleep(400)
+  // Счёт — с нажатия: перезагрузка в демо тоже не должна звать GitHub.
+  const hitsBefore = githubHits
+  await act(`byText('button', 'Открыть демо').click();`)
+  const entered = await waitFor(onPage(bar), 20_000)
+  await sleep(1000)
+
+  await go('/')
+  await waitFor(onPage('Отложено'), 10_000)
+  const month = (await screen()).replace(/ /g, ' ')
+  check(
+    'демо: полоса и «Месяц» с доходом и нормой сбережений — Я-44 «FamilyCore»',
+    entered && has(month, bar) && /\d+% дохода/.test(month) && has(month, 'цель — 20%') && !has(month, 'не внесён'),
+    [line(month, 'Демо'), line(month, '% дохода')].join(' · '),
+  )
+  check(
+    'демо: «Месяц» без позиций без курса, обычный месяц посчитан',
+    !has(month, 'нет курса') && /по \d+ месяц\S*, без особых трат/.test(month),
+    line(month, 'без особых трат'),
+  )
+
+  await go('/capital')
+  await sleep(500)
+  const capital = await screen()
+  check(
+    'демо: «Капитал» — выдуманные счета со снимками, своих не видно, курса хватает',
+    has(capital, bar) &&
+      has(capital, 'Северный банк') &&
+      has(capital, 'Брокерский счёт') &&
+      !has(capital, 'Синий банк') &&
+      !has(capital, 'нет курса') &&
+      !has(capital, 'без снимка'),
+    line(capital, 'Северный банк'),
+  )
+
+  await go('/debts')
+  for (let pass = 0; pass < 3; pass++) {
+    await act(`unfoldAll(document);`)
+    await sleep(300)
+  }
+  const debts = await screen()
+  check(
+    'демо: «Долги» — разовый долг и комната',
+    has(debts, bar) && has(debts, 'Вера') && has(debts, 'Дача'),
+    [line(debts, 'Вера'), line(debts, 'Дача')].join(' · '),
+  )
+
+  await go('/settings')
+  await sleep(500)
+  const settings = await screen()
+  const syncFold = await run(`[...document.querySelectorAll('.fold__btn')].some((el) => el.textContent.trim().startsWith('Синхронизация'))`)
+  check(
+    'в демо «Синхронизации» в настройках нет, «Демо-данные» — с выходом',
+    syncFold === false && has(settings, 'Выйти из демо'),
+    line(settings, 'демо'),
+  )
+  check('в демо ни одного запроса к GitHub — Я-44 «FamilyCore»', githubHits === hitsBefore, `запросов ${githubHits - hitsBefore}`)
+
+  await act(`window.confirm = () => false; document.querySelector('.demo-bar__leave')?.click();`)
+  await sleep(700)
+  check('«Выйти» с отказом — демо остаётся — Я-45 «FamilyCore»', has(await screen(), bar))
+
+  await act(`window.confirm = (text) => { localStorage.setItem('smokeAsked', text); return true }; document.querySelector('.demo-bar__leave')?.click();`)
+  await sleep(1500)
+  await waitFor(`!${onPage(bar)}`, 20_000)
+  await go('/capital')
+  await sleep(500)
+  const back = await screen()
+  const asked = await run(`localStorage.getItem('smokeAsked')`)
+  const bases = await run(`indexedDB.databases().then((list) => list.map((each) => each.name).join(', '))`)
+  check(
+    'выход: спросил, свои счета вернулись, демо-база стёрта — Я-44, Я-45 «FamilyCore»',
+    has(asked ?? '', 'сотрётся') &&
+      has(back, 'Синий банк') &&
+      !has(back, bar) &&
+      !has(back, 'Северный банк') &&
+      !String(bases).split(', ').includes('zloty-demo'),
+    `${asked}; базы: ${bases}`,
+  )
+  await send('Network.disable')
 }
 
 // ─── Прогон ────────────────────────────────────────────────────────────────

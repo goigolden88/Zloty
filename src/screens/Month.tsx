@@ -49,6 +49,7 @@ import {
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
 import { addMonths, formatDate, formatMonth, MONTHS_SHORT, monthOf, plural, today } from '../shared/core/dates.ts'
 import { BarChart, type BarItem } from '../shared/ui/BarChart.tsx'
+import { DemoOffer } from '../shared/ui/Demo.tsx'
 import { Fold } from '../shared/ui/Fold.tsx'
 import { WhatsNew } from '../shared/screens/WhatsNew.tsx'
 import { useFirstRun } from '../shared/screens/useFirstRun.ts'
@@ -78,7 +79,9 @@ export function Month() {
   const specials = useSpecials()
   const [month, setMonth] = useState(() => monthOf(today()))
 
-  if (whatsNew.show.length > 0) return <WhatsNew changes={whatsNew.show} onDone={whatsNew.dismiss} />
+  // В демо «Что нового» не показывается: демо-база с записями, но без
+  // отметки о прочитанном, и вместо «Месяца» открылся бы список изменений.
+  if (!db.demo && whatsNew.show.length > 0) return <WhatsNew changes={whatsNew.show} onDone={whatsNew.dismiss} />
 
   // Без периодов особый расход посчитался бы только по флагу (Р-55):
   // число вышло бы уверенным и другим, поэтому их ждут, как и записи.
@@ -114,6 +117,9 @@ export function Month() {
         </div>
       </header>
 
+      {/* Первый запуск: демо — один раз и только устройству без токена «семья»
+          (Я-45 «FamilyCore»), затем приветствие, пока база пуста и его не закрыли. */}
+      <DemoOffer own={SYNCED_STORES} />
       {base.welcome && <Welcome onDone={base.dismissWelcome} empty={base.empty} />}
 
       {busy && <p className="muted">Считаю…</p>}

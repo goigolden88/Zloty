@@ -9,6 +9,7 @@
 
 import type { AppConfig } from '../shared/core/model.ts'
 import { entryDate, MIGRATIONS, SCHEMA_VERSION, SYNCED_STORES, V1_STORES, type StoreRecord } from './model.ts'
+import { demo } from '../screens/demo.ts'
 import { summary } from '../summary/slice.ts'
 
 export const config: AppConfig<StoreRecord> = {
@@ -126,4 +127,8 @@ export const config: AppConfig<StoreRecord> = {
   // синхронизации кладёт его в ZlotyData файлом summary.json. Только
   // ступень 1 Я-13 — без сумм, долей и названий.
   summary,
+
+  // Демо-данные (Я-44, Я-45 «FamilyCore»): выдуманные записи от дня входа —
+  // своя база `zloty-demo` без синхронизации. Полнота — `demo.test.ts`.
+  demo,
 }

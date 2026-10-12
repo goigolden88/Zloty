@@ -38,7 +38,7 @@ const TABS: readonly Tab[] = [
 ]
 
 export function App() {
-  useEffect(() => sync.startAutoSync(), [])
+  useEffect(() => sync?.startAutoSync(), [])
 
   return (
     <CoreProvider value={{ config, db, sync }}>
