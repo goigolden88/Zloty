@@ -2250,8 +2250,9 @@ async function demoScenario() {
   await sleep(400)
   // Счёт — с нажатия: перезагрузка в демо тоже не должна звать GitHub.
   const hitsBefore = githubHits
-  await act(`byText('button', 'Открыть демо').click();`)
+  await act(`window.confirm = (text) => { localStorage.setItem('smokeEnterAsked', text); return true }; byText('button', 'Открыть демо').click()`)
   const entered = await waitFor(onPage(bar), 20_000)
+  check('«Открыть демо» в настройках спрашивает — Я-46 «FamilyCore»', String(await run(`localStorage.getItem('smokeEnterAsked')`)).includes('сотрётся при выходе'))
   await sleep(1000)
 
   await go('/')
