@@ -20,11 +20,11 @@
  *   не загружается, для переноса есть копия в JSON.
  */
 
-import type { Currency } from '../../app/model.ts'
+import type { Account, Currency } from '../../app/model.ts'
 import { formatDate, formatMonth, plural } from '../../shared/core/dates.ts'
 import { findCurrency, formatMoney } from '../money/money.ts'
 import type { Recorded } from './entries.ts'
-import type { CategoryGrowth, Growth, MonthReport, OverUsualReport, Usual } from './month.ts'
+import { provisional, type CategoryGrowth, type Growth, type MonthReport, type OverUsualReport, type Usual } from './month.ts'
 import type { Need } from './need.ts'
 import type { Due } from './recurring.ts'
 
@@ -40,6 +40,8 @@ export type ReportInput = {
   categories: { rows: CategoryGrowth[]; months: number }
   over: OverUsualReport
   recorded: Recorded | null
+  /** Счета на паузе, которых не хватает этому месяцу (Р-62, `pausedIn`). */
+  paused: readonly Account[]
   /** Сколько платежей по редким шаблонам вынесено из обычного месяца (Р-27). */
   excluded: number
   /**
@@ -103,7 +105,14 @@ type Show = (amount: number) => string
 /** Насколько месяц прожит и насколько записан (Р-22, Р-24, Р-26). */
 function completeness(input: ReportInput, _show: Show): string[] {
   const running = input.report.running
-  if (running === null) return []
+  // Счёт на паузе называется и в месяце, который по сроку записан целиком:
+  // остальные счета дошли до конца, а его операций после паузы нет (Р-62).
+  const paused = input.paused.map(
+    (each) =>
+      `Счёт «${each.name}» на паузе — банк недоступен: его операций после ${formatDate(each.pausedSince ?? '')}` +
+      ' нет, и числа месяца посчитаны без них.',
+  )
+  if (running === null) return paused.length > 0 ? [...paused, ''] : []
 
   const out: string[] = []
   if (running.going) {
@@ -116,6 +125,7 @@ function completeness(input: ReportInput, _show: Show): string[] {
         `Расход посчитан по ${running.passed} ${daysTo(running.passed)} месяца, а не по всем прошедшим.`,
     )
   }
+  out.push(...paused)
   return out.length > 0 ? [...out, ''] : []
 }
 
@@ -155,7 +165,10 @@ function totals(input: ReportInput, show: Show): string[] {
         : report.income.amount > 0 && report.expense.amount > report.income.amount * 2
           ? ` — расход больше дохода в ${times(report)} ${plural(times(report), ['раз', 'раза', 'раз'])}`
           : ` — ${percent(report.savingsRate)} дохода`
-    out.push(`- Отложено: ${show(saved)}${rate}`)
+    // Месяц записан не до конца — число ещё изменится (Р-62).
+    const pending = provisional(report.running, input.recorded, input.paused)
+    const note = pending.length > 0 ? ` (предварительно: ${pending.join('; ')})` : ''
+    out.push(`- Отложено: ${show(saved)}${rate}${note}`)
   }
 
   if (report.transfers > 0) {
@@ -368,6 +381,12 @@ function unknownPart(input: ReportInput, show: Show): string[] {
     out.push(
       `- Расход за последние ${running.elapsed - running.passed}` +
         ` ${plural(running.elapsed - running.passed, ['день', 'дня', 'дней'])} неизвестен: выписки не загружены`,
+    )
+  }
+  for (const each of input.paused) {
+    out.push(
+      `- Расход и доход по счёту «${each.name}» после ${formatDate(each.pausedSince ?? '')} неизвестны:` +
+        ' счёт на паузе, банк недоступен',
     )
   }
 

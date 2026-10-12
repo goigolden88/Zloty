@@ -6,6 +6,8 @@ import {
   entriesOfMonth,
   lastDayOn,
   makeEntry,
+  monthRecorded,
+  pausedIn,
   recordedThrough,
   type EntryData,
   type EntryDraft,
@@ -373,5 +375,50 @@ describe('по какое число доведены выписки (Р-26)', (
 
   it('выписок не грузили вовсе — срока нет, и месяц считается по календарю', () => {
     expect(recordedThrough([cash])).toBeNull()
+  })
+})
+
+describe('счёт на паузе (Р-62)', () => {
+  const blue: Account = {
+    id: 'a1',
+    updatedAt: AT,
+    name: 'Синий банк',
+    currency: 'RUB',
+    kind: 'savings',
+    loadedThrough: '2026-10-10',
+    order: 0,
+  }
+  /** Банк недоступен: выписка застряла на третьем числе. */
+  const yellow: Account = { ...blue, id: 'a2', name: 'Жёлтый банк', loadedThrough: '2026-10-03', pausedSince: '2026-10-03' }
+  const cash: Account = { ...blue, id: 'a3', name: 'Наличные', loadedThrough: undefined }
+
+  it('счёт на паузе срок не задаёт, но возвращается списком', () => {
+    const found = monthRecorded([blue, yellow, cash])
+    expect(found.recorded?.day).toBe('2026-10-10')
+    expect(found.recorded?.account.name).toBe('Синий банк')
+    expect(found.paused.map((each) => each.name)).toEqual(['Жёлтый банк'])
+  })
+
+  // Срез итогов по-прежнему держится за самый отставший счёт.
+  it('прежний срок паузы не знает', () => {
+    expect(recordedThrough([blue, yellow])?.day).toBe('2026-10-03')
+  })
+
+  it('все счета с выписками на паузе — срока нет, а не «записей нет»', () => {
+    const found = monthRecorded([yellow, cash])
+    expect(found.recorded).toBeNull()
+    expect(found.paused).toHaveLength(1)
+  })
+
+  it('архивный счёт и счёт истории на паузе не называются', () => {
+    const found = monthRecorded([blue, { ...yellow, archived: true }, { ...yellow, id: 'a4', ledgerOnly: true }])
+    expect(found.paused).toEqual([])
+  })
+
+  it('месяц, загруженный целиком до паузы, о ней не говорит', () => {
+    expect(pausedIn([yellow], '2026-09')).toEqual([])
+    expect(pausedIn([yellow], '2026-10').map((each) => each.id)).toEqual(['a2'])
+    expect(pausedIn([{ ...yellow, pausedSince: '2026-09-30' }], '2026-09')).toEqual([])
+    expect(pausedIn([{ ...yellow, pausedSince: '2026-09-29' }], '2026-09')).toHaveLength(1)
   })
 })

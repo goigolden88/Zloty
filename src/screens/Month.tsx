@@ -5,7 +5,7 @@ import { db } from '../app/core.ts'
 import type { Account, SpecialPeriod } from '../app/model.ts'
 import { SYNCED_STORES } from '../app/model.ts'
 import { baseCurrencyOf, readProfile } from '../modules/ledger/profile.ts'
-import { recordedThrough, type Recorded } from '../modules/ledger/entries.ts'
+import { monthRecorded, pausedIn, type Recorded } from '../modules/ledger/entries.ts'
 import { needed, rareIds, type Need } from '../modules/ledger/need.ts'
 import { dueThisMonth } from '../modules/ledger/recurring.ts'
 import { monthReportText } from '../modules/ledger/report.ts'
@@ -30,6 +30,7 @@ import {
   GROWTH_MONTHS,
   overUsual,
   OVER_USUAL_MIN,
+  provisional,
   savingsRate,
   toDate,
   usualMonth,
@@ -200,9 +201,12 @@ function Report({
   const now = today()
   // По какое число доведены записи — тем же правилом, каким промпт импорта
   // решает, с какого дня брать выписку (Р-24). Календарь и записи расходятся,
-  // и сравнивать надо по записанному.
-  const recorded = recordedThrough(accounts)
+  // и сравнивать надо по записанному. Счёт на паузе срок не задаёт, но
+  // называется рядом (Р-62).
+  const { recorded, paused: pausedAll } = monthRecorded(accounts)
+  const paused = `${month}-01` <= now ? pausedIn(pausedAll, month) : []
   const report = monthReport(data, month, now, recorded?.day ?? null)
+  const pending = provisional(report.running, recorded, paused)
   // Платежи по неежемесячным шаблонам выносятся из обычного месяца: они
   // вернутся долей в необходимом доходе (Р-27).
   const needData = { ...data, recurring: waiting.recurring, categories: waiting.categories }
@@ -234,6 +238,7 @@ function Report({
       </div>
 
       <RunningNote running={report.running} recorded={recorded} />
+      <PausedNote paused={paused} none={recorded === null} />
 
       {/* Главный ответ — первым. Всё остальное объясняет его. */}
       <div className="block">
@@ -257,11 +262,14 @@ function Report({
               {rateWords(savingsRate(report))} — {basis(report.income, 'доход')},{' '}
               {basis(report.expense, 'расход')}
             </p>
+            {pending.length > 0 && <p className="basis">предварительно: {pending.join('; ')}</p>}
             {goal !== null && report.savingsRate !== null && savingsRate(report).kind === 'share' && (
               <p className="basis">
                 {report.savingsRate >= goal
-                  ? `цель — ${percent(goal)}, и в этом месяце она взята`
-                  : `цель — ${percent(goal)}: до неё не хватает ${show(Math.round(report.income.amount * goal) - (report.saved ?? 0))}`}
+                  ? pending.length > 0
+                    ? `цель — ${percent(goal)}, и пока она взята: месяц записан не до конца`
+                    : `цель — ${percent(goal)}, и в этом месяце она взята`
+                  : `цель — ${percent(goal)}: ${pending.length > 0 ? 'пока ' : ''}до неё не хватает ${show(Math.round(report.income.amount * goal) - (report.saved ?? 0))}`}
               </p>
             )}
           </>
@@ -337,6 +345,7 @@ function Report({
             categories: byCategory,
             over,
             recorded,
+            paused,
             excluded: seen.excluded,
             due: dueThisMonth(waiting, month),
             names,
@@ -418,6 +427,34 @@ function RunningNote({ running, recorded }: { running: Running | null; recorded:
       {plural(passed, ['день', 'дня', 'дней'])}, а не за весь месяц: иначе стороны мерили бы
       разные сроки.
     </p>
+  )
+}
+
+/**
+ * Счета на паузе (Р-62): банк недоступен, и срок месяца они не задают.
+ *
+ * Счёт не пропадает из расчёта молча: его траты после дня паузы в числах
+ * отсутствуют, и это сказано здесь же, у срока. Все счета с выписками
+ * на паузе — срока нет вовсе, и это тоже словами, а не «записей нет».
+ */
+function PausedNote({ paused, none }: { paused: readonly Account[]; none: boolean }) {
+  if (paused.length === 0) return null
+
+  return (
+    <>
+      {paused.map((each) => (
+        <p key={each.id} className="error">
+          Без счёта «{each.name}» — на паузе: его операций после {formatDate(each.pausedSince ?? '')} нет, и числа
+          месяца посчитаны без них. Пауза снимется сама, когда загрузится его выписка.
+        </p>
+      ))}
+      {none && (
+        <p className="basis">
+          Все счета с выписками на паузе — срок записей не задаёт ни один, и сравнения с обычным месяцем идут
+          по календарю.
+        </p>
+      )}
+    </>
   )
 }
 

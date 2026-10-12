@@ -7,6 +7,7 @@ import {
   active,
   activeCategories,
   archived,
+  canPause,
   categoryProblem,
   createAccount,
   createCategory,
@@ -40,7 +41,7 @@ import {
 } from '../modules/ledger/recurring.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
 import { findCurrency, formatMoney, parseAmount, suggestDecimals } from '../modules/money/money.ts'
-import { monthOf, plural, today } from '../shared/core/dates.ts'
+import { formatDate, monthOf, plural, today } from '../shared/core/dates.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
 
 /**
@@ -132,6 +133,9 @@ function Accounts({ data }: { data: LedgerData }) {
                 · {account.currency} · {account.kind === 'investment' ? 'вложения' : 'сбережения'}
                 {account.ledgerOnly && ' · счёт истории'}
               </span>
+              {account.pausedSince && canPause(account) && (
+                <div className="basis">на паузе с {formatDate(account.pausedSince)} — банк недоступен</div>
+              )}
             </div>
             <div className="row row--wrap">
               <button type="button" onClick={() => void moveAccount(data.accounts, account.id, -1)} disabled={at === 0} aria-label="Выше">
@@ -227,9 +231,13 @@ function AccountForm({
   const [currency, setCurrency] = useState(record?.currency ?? currencies[0]?.code ?? '')
   const [kind, setKind] = useState<Account['kind']>(record?.kind ?? 'savings')
   const [ledgerOnly, setLedgerOnly] = useState(record?.ledgerOnly === true)
+  const [paused, setPaused] = useState(Boolean(record?.pausedSince))
   const [error, setError] = useState('')
+  // Пауза — только у счёта, который задаёт срок месяца (Р-62): с выпиской,
+  // не истории и не в архиве.
+  const pausable = record !== null && !ledgerOnly && canPause(record)
 
-  const draft: AccountDraft = { name, currency, kind, ledgerOnly }
+  const draft: AccountDraft = { name, currency, kind, ledgerOnly, paused: pausable && paused }
 
   function submit() {
     const problem = accountProblem(data, draft, record?.id)
@@ -272,6 +280,20 @@ function AccountForm({
         Пометка нужна одному счёту — тому, на который переносятся итоги прежней таблицы. Иначе они столкнутся
         с выписками тех же месяцев.
       </p>
+
+      {pausable && record.loadedThrough && (
+        <>
+          <label className="check">
+            <input type="checkbox" checked={paused} onChange={(event) => setPaused(event.target.checked)} />
+            Банк недоступен — счёт на паузе
+          </label>
+          <p className="muted">
+            Выписка загружена по {formatDate(record.pausedSince ?? record.loadedThrough)}. На паузе счёт не держит
+            срок «Месяца»: сравнения идут по остальным счетам, а «Месяц» говорит, что операций этого счёта после
+            этого дня нет. Пауза снимется сама, когда загрузится его выписка.
+          </p>
+        </>
+      )}
 
       {error && <p className="error">{error}</p>}
 
