@@ -320,6 +320,7 @@ function EventCard({
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<RoomSpend | null>(null)
   const [renaming, setRenaming] = useState(false)
+  const [sure, setSure] = useState(false)
   const spends = spendsOf(data.roomSpends, event.id)
   const code = currency?.code ?? ''
   const money = (amount: number) => formatMoney({ amount, currency: code }, currency)
@@ -355,12 +356,22 @@ function EventCard({
           }}
           onCancel={() => setRenaming(false)}
         />
+      ) : sure ? (
+        // Удалённое событие прячет и свои траты, а вернуть его нечем — поэтому со второго нажатия.
+        <div className="row row--wrap">
+          <button type="button" className="btn--danger" onClick={() => void db.put('roomEvents', removed(event))}>
+            Точно удалить
+          </button>
+          <button type="button" onClick={() => setSure(false)}>
+            Отмена
+          </button>
+        </div>
       ) : (
         <div className="row row--wrap">
           <button type="button" onClick={() => setRenaming(true)}>
             Изменить событие
           </button>
-          <button type="button" onClick={() => void db.put('roomEvents', removed(event))}>
+          <button type="button" onClick={() => setSure(true)}>
             Удалить
           </button>
         </div>
@@ -432,6 +443,7 @@ function SpendLine({
   money: (amount: number) => string
   onEdit: (spend: RoomSpend) => void
 }) {
+  const [sure, setSure] = useState(false)
   const shares = sharesOf(spend)
   const missing = event.personIds.length - spend.split.length
 
@@ -457,12 +469,25 @@ function SpendLine({
       </div>
       <div className="row row--wrap">
         <strong>{money(spend.amount)}</strong>
-        <button type="button" onClick={() => onEdit(spend)}>
-          Изменить
-        </button>
-        <button type="button" onClick={() => void db.put('roomSpends', removed(spend))}>
-          Удалить
-        </button>
+        {sure ? (
+          <>
+            <button type="button" className="btn--danger" onClick={() => void db.put('roomSpends', removed(spend))}>
+              Точно удалить
+            </button>
+            <button type="button" onClick={() => setSure(false)}>
+              Отмена
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={() => onEdit(spend)}>
+              Изменить
+            </button>
+            <button type="button" onClick={() => setSure(true)}>
+              Удалить
+            </button>
+          </>
+        )}
       </div>
     </li>
   )
@@ -748,6 +773,8 @@ function Transfers({
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
+  // Какой перевод ждёт второго нажатия «Точно удалить».
+  const [sure, setSure] = useState<string | null>(null)
 
   async function submit() {
     if (!currency) return setError('у комнаты валюта, которой нет в справочнике')
@@ -783,12 +810,24 @@ function Transfers({
             </div>
             <div className="row row--wrap">
               <strong>{money(transfer.amount)}</strong>
-              <button
-                type="button"
-                onClick={() => void db.put('roomTransfers', removed(transfer))}
-              >
-                Удалить
-              </button>
+              {sure === transfer.id ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn--danger"
+                    onClick={() => void db.put('roomTransfers', removed(transfer))}
+                  >
+                    Точно удалить
+                  </button>
+                  <button type="button" onClick={() => setSure(null)}>
+                    Отмена
+                  </button>
+                </>
+              ) : (
+                <button type="button" onClick={() => setSure(transfer.id)}>
+                  Удалить
+                </button>
+              )}
             </div>
           </li>
         ))}

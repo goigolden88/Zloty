@@ -474,6 +474,8 @@ function RenameField({
 function Recurrings({ data }: { data: LedgerData }) {
   const [editing, setEditing] = useState<Recurring | null>(null)
   const [adding, setAdding] = useState(false)
+  // Какой шаблон ждёт второго нажатия «Точно удалить».
+  const [sure, setSure] = useState<string | null>(null)
   const live = data.recurring.filter((each) => !each.deleted).sort((a, b) => a.order - b.order)
 
   async function save(draft: RecurringDraft) {
@@ -514,12 +516,25 @@ function Recurrings({ data }: { data: LedgerData }) {
               </div>
             </div>
             <div className="row row--wrap">
-              <button type="button" onClick={() => setEditing(each)}>
-                Изменить
-              </button>
-              <button type="button" onClick={() => void db.remove('recurring', each.id)}>
-                Убрать
-              </button>
+              {sure === each.id ? (
+                <>
+                  <button type="button" className="btn--danger" onClick={() => void db.remove('recurring', each.id)}>
+                    Точно удалить
+                  </button>
+                  <button type="button" onClick={() => setSure(null)}>
+                    Отмена
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" onClick={() => setEditing(each)}>
+                    Изменить
+                  </button>
+                  <button type="button" onClick={() => setSure(each.id)}>
+                    Убрать
+                  </button>
+                </>
+              )}
             </div>
           </li>
         ))}
