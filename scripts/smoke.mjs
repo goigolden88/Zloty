@@ -447,6 +447,25 @@ async function scenario(profile) {
     line(withRecurring, 'Связь'),
   )
 
+  // «Убрать» шаблон — со второго нажатия. Шаблон нужен дальше: только «Отмена».
+  const recurringRow = `[...document.querySelectorAll('li.line')].find((el) => el.textContent.includes('каждый месяц'))`
+  await act(`[...${recurringRow}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Убрать').click();`)
+  await sleep(400)
+  const recurringAsk = await run(`(() => { const row = ${recurringRow}; return row ? row.textContent : '' })()`)
+  check(
+    '«Убрать» у регулярной спрашивает второй раз, шаблон на месте',
+    String(recurringAsk).includes('Связь') && String(recurringAsk).includes('Точно удалить'),
+    String(recurringAsk),
+  )
+  await act(`[...${recurringRow}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Отмена').click();`)
+  await sleep(400)
+  const recurringBack = await run(`(() => { const row = ${recurringRow}; return row ? row.textContent : '' })()`)
+  check(
+    '«Отмена» возвращает «Изменить» и «Убрать»',
+    String(recurringBack).includes('Убрать') && String(recurringBack).includes('Изменить'),
+    String(recurringBack),
+  )
+
   // Записанное обязано пережить перезагрузку: это IndexedDB, а не состояние
   // экрана. Проверка ловит и то, что запись вообще дошла до базы.
   await send('Page.navigate', { url: APP })
@@ -1762,6 +1781,27 @@ async function scenario(profile) {
     line(transfers, 'Боря → Аня'),
   )
 
+  // Удаление перевода — со второго нажатия; «Отмена» возвращает как было.
+  // Перевод нужен дальше — до «Точно удалить» здесь не доходит.
+  const transferRow = `[...document.querySelectorAll('li.line')].find((el) =>
+    el.textContent.includes('Боря → Аня') && [...el.querySelectorAll('button')].length > 0)`
+  await act(`[...${transferRow}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Удалить').click();`)
+  await sleep(400)
+  const transferAsk = await run(`(() => { const row = ${transferRow}; return row ? row.textContent : '' })()`)
+  check(
+    'удаление перевода спрашивает второй раз, перевод на месте',
+    String(transferAsk).includes('Точно удалить') && String(transferAsk).includes('Отмена'),
+    String(transferAsk),
+  )
+  await act(`[...${transferRow}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Отмена').click();`)
+  await sleep(400)
+  const transferBack = await run(`(() => { const row = ${transferRow}; return row ? row.textContent : '' })()`)
+  check(
+    '«Отмена» возвращает «Удалить» у перевода',
+    String(transferBack).includes('Удалить') && !String(transferBack).includes('Точно'),
+    String(transferBack),
+  )
+
   // ── Доля весом (Р-33): «Ане две порции, Боре одна».
   await go('/debts')
   await sleep(400)
@@ -1807,6 +1847,21 @@ async function scenario(profile) {
   check('правка траты открывается с суммой и весом, а не с пустыми полями', opened === '900|2', String(opened))
   await act(`byText('button', 'Отмена').click();`)
   await sleep(400)
+
+  // Удаление траты — со второго нажатия: первое только спрашивает.
+  const pizzaRow = `[...document.querySelectorAll('li.line')].find((el) => el.textContent.includes('Пицца'))`
+  await act(`[...${pizzaRow}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Удалить').click();`)
+  await sleep(400)
+  const pizzaAsk = await run(`(() => { const row = ${pizzaRow}; return row ? row.textContent : '' })()`)
+  check(
+    'удаление траты спрашивает второй раз, трата на месте',
+    String(pizzaAsk).includes('Пицца') && String(pizzaAsk).includes('Точно удалить'),
+    String(pizzaAsk),
+  )
+  await act(`[...${pizzaRow}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Точно удалить').click();`)
+  await sleep(700)
+  const pizzaGone = await screen()
+  check('после «Точно удалить» трата удалена', !has(pizzaGone, 'Пицца'), line(pizzaGone, 'Пицца'))
 
   // ── Связь операции с тратой (Р-31): в расход входит доля, а не сумма.
   await go('/entries')
@@ -1928,6 +1983,25 @@ async function scenario(profile) {
   await sleep(300)
   await act(`byText('button', 'Завести').click();`)
   await sleep(800)
+
+  // Удаление события — со второго нажатия: удалённое прячет и свои траты.
+  // Событие нужно дальше, для удаления комнаты, — только «Отмена».
+  await act(`byText('button', 'Удалить').click();`)
+  await sleep(400)
+  const eventAsk = await screen()
+  check(
+    'удаление события спрашивает второй раз, событие на месте',
+    has(eventAsk, 'Точно удалить') && has(eventAsk, 'Шашлык') && !has(eventAsk, 'Изменить событие'),
+    line(eventAsk, 'Точно удалить'),
+  )
+  await act(`byText('button', 'Отмена').click();`)
+  await sleep(400)
+  const eventBack = await screen()
+  check(
+    '«Отмена» возвращает кнопки события',
+    has(eventBack, 'Изменить событие') && !has(eventBack, 'Точно удалить'),
+    line(eventBack, 'Изменить событие'),
+  )
 
   await go('/debts')
   await sleep(400)
