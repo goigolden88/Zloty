@@ -6,6 +6,7 @@ import {
   entriesOfMonth,
   lastDayOn,
   makeEntry,
+  monthPeriod,
   monthRecorded,
   pausedIn,
   recordedThrough,
@@ -90,6 +91,18 @@ describe('дата или период', () => {
 
   it('обычная операция без категории не заводится', () => {
     expect(problem(makeEntry(draft({ categoryId: undefined }), data()))).toBe('не выбрана категория')
+  })
+})
+
+describe('период итога по умолчанию — весь месяц', () => {
+  it('с первого по последний день месяца', () => {
+    expect(monthPeriod('2026-10')).toEqual({ from: '2026-10-01', to: '2026-10-31' })
+    expect(monthPeriod('2026-09')).toEqual({ from: '2026-09-01', to: '2026-09-30' })
+  })
+
+  it('февраль — по году: 28-е в обычный, 29-е в високосный', () => {
+    expect(monthPeriod('2026-02').to).toBe('2026-02-28')
+    expect(monthPeriod('2028-02').to).toBe('2028-02-29')
   })
 })
 

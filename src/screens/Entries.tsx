@@ -8,6 +8,7 @@ import {
   editEntry,
   entriesOfMonth,
   makeEntry,
+  monthPeriod,
   type EntryData,
   type EntryDraft,
 } from '../modules/ledger/entries.ts'
@@ -571,8 +572,8 @@ function EntryForm({
   const [toAccountId, setToAccountId] = useState(was?.toAccountId ?? '')
   const [amount, setAmount] = useState(was?.amount ?? '')
   const [date, setDate] = useState(was?.date ?? (monthOf(today()) === month ? today() : `${month}-01`))
-  const [from, setFrom] = useState(was?.period?.from ?? `${month}-01`)
-  const [to, setTo] = useState(was?.period?.to ?? `${month}-28`)
+  const [from, setFrom] = useState(was?.period?.from ?? monthPeriod(month).from)
+  const [to, setTo] = useState(was?.period?.to ?? monthPeriod(month).to)
   const [categoryId, setCategoryId] = useState(was?.categoryId ?? '')
   const [special, setSpecial] = useState(was?.special === true)
   const [forMonth, setForMonth] = useState(was?.for ?? '')
