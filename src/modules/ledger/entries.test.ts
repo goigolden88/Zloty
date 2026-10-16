@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Account, Currency, Entry } from '../../app/model.ts'
+import { monthPeriod } from '../../shared/core/dates.ts'
 import {
   draftOf,
   editEntry,
   entriesOfMonth,
   lastDayOn,
   makeEntry,
-  monthPeriod,
   monthRecorded,
   pausedIn,
   recordedThrough,

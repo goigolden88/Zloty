@@ -153,14 +153,6 @@ export function draftOf(entry: Entry, decimals: number): EntryDraft {
   return draft
 }
 
-/**
- * Период, который форма итога предлагает для месяца: весь месяц, с первого
- * по последний день. Итог, сохранённый как предложено, покрывает месяц целиком.
- */
-export function monthPeriod(month: string): { from: string; to: string } {
-  return { from: `${month}-01`, to: lastDayOf(month) }
-}
-
 function whenProblem(draft: EntryDraft): string | null {
   const hasDate = Boolean(draft.date)
   const hasPeriod = Boolean(draft.period)
