@@ -8,7 +8,6 @@ import {
   editEntry,
   entriesOfMonth,
   makeEntry,
-  monthPeriod,
   type EntryData,
   type EntryDraft,
 } from '../modules/ledger/entries.ts'
@@ -21,7 +20,7 @@ import { useEntries } from '../modules/ledger/useEntries.ts'
 import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
 import { useSpecials } from '../modules/ledger/useSpecials.ts'
 import { findCurrency, formatMoney } from '../modules/money/money.ts'
-import { addMonths, formatDate, formatMonth, monthOf, nowIso, today } from '../shared/core/dates.ts'
+import { addMonths, formatDate, formatMonth, monthOf, monthPeriod, nowIso, today } from '../shared/core/dates.ts'
 import { feedDateText, feedHeading, filterFeed, groupFeed, recordsText } from '../shared/core/feed.ts'
 import { feedItems } from '../registry.ts'
 import { useFeed } from '../shared/screens/useFeed.ts'
