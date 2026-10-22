@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Category, Entry, SpecialPeriod } from '../app/model.ts'
@@ -11,7 +11,14 @@ import {
   type EntryData,
   type EntryDraft,
 } from '../modules/ledger/entries.ts'
-import { dueThisMonth, enterAll, enterRecurring, leftToPay, type Due } from '../modules/ledger/recurring.ts'
+import {
+  dueThisMonth,
+  enterAll,
+  enterRecurring,
+  entriesFor,
+  leftToPay,
+  type Due,
+} from '../modules/ledger/recurring.ts'
 import { type DebtsData } from '../modules/debts/summary.ts'
 import { useDebts } from '../modules/debts/useDebts.ts'
 import { linkChoices, linkNote } from '../summary/links.ts'
@@ -241,6 +248,32 @@ function Search({
   )
 }
 
+// ─── Одна запись за раз ────────────────────────────────────────────────────
+
+/**
+ * Защита от двойного тапа — как у долгов (Р-60). Флаг в `ref` ставится
+ * до первого `await`: два тапа подряд приходят раньше, чем React
+ * перерисует кнопку неактивной, — `busy` здесь только видимая часть.
+ */
+function useOnce() {
+  const writing = useRef(false)
+  const [busy, setBusy] = useState(false)
+
+  async function once(write: () => Promise<void>) {
+    if (writing.current) return
+    writing.current = true
+    setBusy(true)
+    try {
+      await write()
+    } finally {
+      writing.current = false
+      setBusy(false)
+    }
+  }
+
+  return { busy, once }
+}
+
 // ─── Регулярные (Р-06) ─────────────────────────────────────────────────────
 
 /**
@@ -260,6 +293,7 @@ function RecurringBlock({
   month: string
 }) {
   const [problems, setProblems] = useState<string[]>([])
+  const { busy, once } = useOnce()
   const data = {
     recurring: ledger.recurring,
     categories: ledger.categories,
@@ -271,17 +305,29 @@ function RecurringBlock({
 
   const left = due.filter((each) => each.entries.length === 0)
 
+  // Внесено ли — по записям из базы, а не с экрана: экран мог ещё
+  // не перерисоваться после прошлого тапа (как у долгов, Р-60).
+  async function fresh() {
+    return { ...data, entries: await db.getAll('entries') }
+  }
+
   async function enterOne(one: Due) {
-    const made = enterRecurring(one.recurring, data, month, today())
-    if ('problem' in made) return setProblems([made.problem])
-    setProblems([])
-    await db.put('entries', made.entry)
+    await once(async () => {
+      const now = await fresh()
+      if (entriesFor(now.entries, one.recurring.id, month).length > 0) return setProblems([])
+      const made = enterRecurring(one.recurring, now, month, today())
+      if ('problem' in made) return setProblems([made.problem])
+      setProblems([])
+      await db.put('entries', made.entry)
+    }).catch((error: unknown) => setProblems([`не записалось: ${String(error)}`]))
   }
 
   async function all() {
-    const made = enterAll(data, month, today())
-    setProblems(made.problems)
-    if (made.entries.length > 0) await db.putMany('entries', made.entries)
+    await once(async () => {
+      const made = enterAll(await fresh(), month, today())
+      setProblems(made.problems)
+      if (made.entries.length > 0) await db.putMany('entries', made.entries)
+    }).catch((error: unknown) => setProblems([`не записалось: ${String(error)}`]))
   }
 
   return (
@@ -311,7 +357,7 @@ function RecurringBlock({
               )}
             </div>
             {one.entries.length === 0 && (
-              <button type="button" onClick={() => void enterOne(one)}>
+              <button type="button" disabled={busy} onClick={() => void enterOne(one)}>
                 Внести
               </button>
             )}
@@ -321,7 +367,7 @@ function RecurringBlock({
 
       {left.length > 1 && (
         <div className="row">
-          <button type="button" className="btn--primary" onClick={() => void all()}>
+          <button type="button" className="btn--primary" disabled={busy} onClick={() => void all()}>
             Внести все — {left.length}
           </button>
         </div>
@@ -578,6 +624,7 @@ function EntryForm({
   const [forMonth, setForMonth] = useState(was?.for ?? '')
   const [note, setNote] = useState(was?.note ?? '')
   const [error, setError] = useState('')
+  const { busy, once } = useOnce()
 
   const side: Category['side'] = kind === 'income' ? 'income' : 'expense'
   const categories = kind === 'transfer' ? [] : activeCategories(ledger.categories, side)
@@ -607,8 +654,11 @@ function EntryForm({
     if ('problem' in result) return setError(result.problem)
 
     setError('')
-    await db.put('entries', result.entry)
-    onDone()
+    // Не записалось — форма остаётся с введённым, кнопка снова доступна.
+    await once(async () => {
+      await db.put('entries', result.entry)
+      onDone()
+    }).catch((problem: unknown) => setError(`не записалось: ${String(problem)}`))
   }
 
   return (
@@ -750,7 +800,7 @@ function EntryForm({
         <button type="button" onClick={onDone}>
           Отмена
         </button>
-        <button type="button" className="btn--primary" onClick={() => void save()}>
+        <button type="button" className="btn--primary" disabled={busy} onClick={() => void save()}>
           {record ? 'Сохранить' : 'Записать'}
         </button>
       </div>
