@@ -447,7 +447,7 @@ async function scenario(profile) {
     line(withRecurring, 'Связь'),
   )
 
-  // «Убрать» шаблон — со второго нажатия. Шаблон нужен дальше: только «Отмена».
+  // «Убрать» шаблон — со второго нажатия. Шаблон нужен дальше: на нём только «Отмена».
   const recurringRow = `[...document.querySelectorAll('li.line')].find((el) => el.textContent.includes('каждый месяц'))`
   await act(`[...${recurringRow}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Убрать').click();`)
   await sleep(400)
@@ -464,6 +464,30 @@ async function scenario(profile) {
     '«Отмена» возвращает «Изменить» и «Убрать»',
     String(recurringBack).includes('Убрать') && String(recurringBack).includes('Изменить'),
     String(recurringBack),
+  )
+
+  // «Точно удалить» — на отдельном шаблоне, заведённом для этого: «Связь»
+  // нужна дальше, на «Операциях».
+  await act(`byText('button', 'Завести регулярную').click();`)
+  await sleep(400)
+  await act(`
+    set(document.querySelector('input[placeholder="Связь"]'), 'Подписка');
+    set(document.querySelector('input[placeholder="1234,56"]'), '300');
+    byText('button', 'Завести').click();
+  `)
+  await sleep(700)
+  const spareRecurring = `[...document.querySelectorAll('li.line')].find((el) => el.textContent.includes('Подписка'))`
+  const spareMade = await run(`Boolean(${spareRecurring})`)
+  check('второй шаблон, на удаление, завёлся', spareMade === true, String(spareMade))
+  await act(`[...${spareRecurring}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Убрать').click();`)
+  await sleep(400)
+  await act(`[...${spareRecurring}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Точно удалить').click();`)
+  await sleep(700)
+  const recurringGone = await screen()
+  check(
+    '«Точно удалить» убирает шаблон с экрана, а «Связь» остаётся',
+    !has(recurringGone, 'Подписка') && has(recurringGone, 'Связь'),
+    line(recurringGone, 'Подписка'),
   )
 
   // Записанное обязано пережить перезагрузку: это IndexedDB, а не состояние
@@ -1782,7 +1806,7 @@ async function scenario(profile) {
   )
 
   // Удаление перевода — со второго нажатия; «Отмена» возвращает как было.
-  // Перевод нужен дальше — до «Точно удалить» здесь не доходит.
+  // Перевод нужен дальше — на нём только «Отмена».
   const transferRow = `[...document.querySelectorAll('li.line')].find((el) =>
     el.textContent.includes('Боря → Аня') && [...el.querySelectorAll('button')].length > 0)`
   await act(`[...${transferRow}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Удалить').click();`)
@@ -1800,6 +1824,32 @@ async function scenario(profile) {
     '«Отмена» возвращает «Удалить» у перевода',
     String(transferBack).includes('Удалить') && !String(transferBack).includes('Точно'),
     String(transferBack),
+  )
+
+  // «Точно удалить» — на отдельном переводе, записанном руками: узнаётся по
+  // тому, куда перевели.
+  await act(`byText('button', 'Записать перевод').click();`)
+  await sleep(400)
+  await act(`
+    const form = document.querySelector('input[placeholder="на Сбер, если нужно"]').closest('.form');
+    set(form.querySelector('input[inputmode="decimal"]'), '100');
+    set(form.querySelector('input[placeholder="на Сбер, если нужно"]'), 'прогон: на удаление');
+    [...form.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Записать').click();
+  `)
+  await sleep(800)
+  const spareTransfer = `[...document.querySelectorAll('li.line')].find((el) => el.textContent.includes('прогон: на удаление'))`
+  const transferMade = await run(`Boolean(${spareTransfer})`)
+  check('второй перевод, на удаление, записался', transferMade === true, String(transferMade))
+  await act(`[...${spareTransfer}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Удалить').click();`)
+  await sleep(400)
+  await act(`[...${spareTransfer}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Точно удалить').click();`)
+  await sleep(800)
+  const transferGone = await screen()
+  const transferKept = await run(`(() => { const row = ${transferRow}; return row ? row.textContent : '' })()`)
+  check(
+    '«Точно удалить» убирает перевод с экрана, а первый перевод остаётся',
+    !has(transferGone, 'прогон: на удаление') && String(transferKept).includes('Удалить'),
+    line(transferGone, 'прогон: на удаление') || String(transferKept),
   )
 
   // ── Доля весом (Р-33): «Ане две порции, Боре одна».
@@ -1985,7 +2035,7 @@ async function scenario(profile) {
   await sleep(800)
 
   // Удаление события — со второго нажатия: удалённое прячет и свои траты.
-  // Событие нужно дальше, для удаления комнаты, — только «Отмена».
+  // Событие нужно дальше, для удаления комнаты, — на нём только «Отмена».
   await act(`byText('button', 'Удалить').click();`)
   await sleep(400)
   const eventAsk = await screen()
@@ -2001,6 +2051,34 @@ async function scenario(profile) {
     '«Отмена» возвращает кнопки события',
     has(eventBack, 'Изменить событие') && !has(eventBack, 'Точно удалить'),
     line(eventBack, 'Изменить событие'),
+  )
+
+  // «Точно удалить» — на втором событии, заведённом для этого. Второе
+  // событие может прийти свёрнутым: раскрывается его блок, и кнопки
+  // ищутся только в нём.
+  await act(`byText('button', 'Новое событие').click();`)
+  await sleep(400)
+  await act(`set(document.querySelector('.form input'), 'Баня');`)
+  await sleep(300)
+  await act(`byText('button', 'Завести').click();`)
+  await sleep(800)
+  const spareEvent = `byText('.fold__btn', 'Баня')`
+  const eventMade = await act(`return Boolean(${spareEvent});`)
+  check('второе событие, на удаление, завелось', eventMade === true, String(eventMade))
+  await act(`
+    const head = ${spareEvent};
+    if (head.getAttribute('aria-expanded') === 'false') head.click();
+  `)
+  await sleep(400)
+  await act(`[...${spareEvent}.closest('section').querySelectorAll('button')].find((each) => each.textContent.trim() === 'Удалить').click();`)
+  await sleep(400)
+  await act(`[...${spareEvent}.closest('section').querySelectorAll('button')].find((each) => each.textContent.trim() === 'Точно удалить').click();`)
+  await sleep(800)
+  const eventGone = await screen()
+  check(
+    '«Точно удалить» убирает событие с экрана, а «Шашлык» остаётся',
+    !has(eventGone, 'Баня') && has(eventGone, 'Шашлык'),
+    line(eventGone, 'Баня'),
   )
 
   await go('/debts')
