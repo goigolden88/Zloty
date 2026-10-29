@@ -22,6 +22,7 @@ import { BarChart, type BarItem } from '../shared/ui/BarChart.tsx'
 import { ImportSummary } from '../shared/screens/ImportRecords.tsx'
 import { Fold } from '../shared/ui/Fold.tsx'
 import { capitalSeries, fullCapitalOn, type FullCapital, type FullData } from '../summary/capital.ts'
+import { notSaved, useOnce } from './once.ts'
 
 /**
  * «Капитал» — сколько у меня всего и как это растёт (Р-05, Р-35…Р-40).
@@ -817,19 +818,23 @@ function SnapshotForm({
   const [date, setDate] = useState(today())
   const [rows, setRows] = useState<RowDraft[]>(() => draftRow(accounts, balances, currencies, today()))
   const [problems, setProblems] = useState<{ accountId: string; reason: string }[]>([])
-  const [busy, setBusy] = useState(false)
+  const { busy, once } = useOnce()
 
   const change = (accountId: string, next: RowDraft) =>
     setRows((was) => was.map((row) => (row.accountId === accountId ? next : row)))
 
+  // Прежние снимки даты — из базы, а не с экрана (Р-60): строка, записанная
+  // вторым тапом до обновления экрана, легла бы рядом и удвоила капитал.
   async function save() {
-    const result = rowWrites(rows, { accounts, balances, currencies }, date, { newId: ulid, now: nowIso() })
-    if (result.problems.length > 0) return setProblems(result.problems)
-    if (result.put.length === 0) return setProblems([{ accountId: '', reason: 'все поля пусты — записывать нечего' }])
-    setBusy(true)
-    await db.putMany('balances', [...result.removed, ...result.put])
-    setBusy(false)
-    onDone(date)
+    await once(async () => {
+      const fresh = await db.getAll('balances')
+      const result = rowWrites(rows, { accounts, balances: fresh, currencies }, date, { newId: ulid, now: nowIso() })
+      if (result.problems.length > 0) return setProblems(result.problems)
+      if (result.put.length === 0) return setProblems([{ accountId: '', reason: 'все поля пусты — записывать нечего' }])
+      setProblems([])
+      await db.putMany('balances', [...result.removed, ...result.put])
+      onDone(date)
+    }).catch((error: unknown) => setProblems([{ accountId: '', reason: notSaved(error) }]))
   }
 
   const nameOf = (id: string) => accounts.find((each) => each.id === id)?.name ?? ''

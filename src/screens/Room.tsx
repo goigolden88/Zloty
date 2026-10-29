@@ -2,12 +2,22 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Currency, Person, Room as RoomRecord, RoomEvent, RoomSpend, RoomTransfer } from '../app/model.ts'
-import { eventsOf, roomBalances, settle, spendsOf, spentTotal, totalsOf, transfersOf } from '../modules/debts/balance.ts'
+import {
+  eventsOf,
+  roomBalances,
+  settle,
+  spendsOf,
+  spentTotal,
+  totalsOf,
+  transfersOf,
+  type Settlement,
+} from '../modules/debts/balance.ts'
 import {
   createEvent,
   createSpend,
   createTransfer,
   eventProblem,
+  markSettled,
   nameOf,
   orderedIds,
   removed,
@@ -28,6 +38,7 @@ import { formatDate, plural, today } from '../shared/core/dates.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
 import { roomLinks } from '../summary/room-links.ts'
 import { roomById } from './Debts.tsx'
+import { notSaved, useOnce } from './once.ts'
 
 /**
  * Комната: события, траты внутри них, переводы и «кто кому должен» (Р-30).
@@ -78,7 +89,7 @@ export function Room() {
         </p>
       </header>
 
-      <WhoOwes room={room} balances={balances} people={debts.data.people} money={money} />
+      <WhoOwes room={room} balances={balances} spends={spends} people={debts.data.people} money={money} />
 
       <Events room={room} events={events} data={debts.data} currency={currency} />
 
@@ -186,18 +197,28 @@ function RemoveRoom({ room, data }: { room: RoomRecord; data: DebtsData }) {
 function WhoOwes({
   room,
   balances,
+  spends,
   people,
   money,
 }: {
   room: { id: string; personIds: string[] }
   balances: Map<string, number>
+  spends: readonly RoomSpend[]
   people: readonly Person[]
   money: (amount: number) => string
 }) {
   const lines = settle(balances)
+  const [error, setError] = useState('')
+  // Одна запись за раз на все строки: остаток комнаты у них общий.
+  const { busy, once } = useOnce()
 
-  async function mark(fromId: string, toId: string, amount: number) {
-    await db.put('roomTransfers', createTransfer(room.id, { fromId, toId, amount, date: today() }))
+  // Нужен ли ещё перевод — по переводам из базы, а не с экрана (Р-60).
+  async function mark(line: Settlement) {
+    setError('')
+    await once(async () => {
+      const transfer = markSettled(room, line, spends, await db.getAll('roomTransfers'), today())
+      if (transfer) await db.put('roomTransfers', transfer)
+    }).catch((problem: unknown) => setError(notSaved(problem)))
   }
 
   return (
@@ -218,13 +239,14 @@ function WhoOwes({
             </div>
             <div className="row row--wrap">
               <strong>{money(line.amount)}</strong>
-              <button type="button" onClick={() => void mark(line.fromId, line.toId, line.amount)}>
+              <button type="button" disabled={busy} onClick={() => void mark(line)}>
                 Перевели
               </button>
             </div>
           </li>
         ))}
       </ul>
+      {error && <p className="error">{error}</p>}
 
       <Fold id="room:balances" title="Итог по участникам" sub folded>
         <ul className="plain">
@@ -510,17 +532,19 @@ function EventForm({
   const [date, setDate] = useState(record?.date ?? today())
   const [chosen, setChosen] = useState<string[]>(record ? [...record.personIds] : [...room.personIds])
   const [error, setError] = useState('')
+  const { busy, once } = useOnce()
 
   function toggle(id: string) {
     setChosen((was) => (was.includes(id) ? was.filter((each) => each !== id) : [...was, id]))
   }
 
-  function submit() {
+  async function submit() {
     const draft: EventDraft = { name, date, personIds: chosen }
     const problem = eventProblem(draft)
     if (problem) return setError(problem)
     setError('')
-    void onSave(draft)
+    // Не записалось — форма остаётся с введённым, кнопка снова доступна.
+    await once(() => onSave(draft)).catch((failure: unknown) => setError(notSaved(failure)))
   }
 
   return (
@@ -554,7 +578,7 @@ function EventForm({
         <button type="button" onClick={onCancel}>
           Отмена
         </button>
-        <button type="button" className="btn--primary" onClick={submit}>
+        <button type="button" className="btn--primary" disabled={busy} onClick={() => void submit()}>
           {record ? 'Сохранить' : 'Завести'}
         </button>
       </div>
@@ -626,6 +650,7 @@ function SpendForm({
     return out
   })
   const [error, setError] = useState('')
+  const { busy, once } = useOnce()
 
   // Люди, которых трата делит, но в событии их уже нет, — не теряются при правке.
   const listed = orderedIds(people, [...event.personIds, ...chosen.filter((id) => !event.personIds.includes(id))])
@@ -641,7 +666,7 @@ function SpendForm({
     setError('')
   }
 
-  function submit() {
+  async function submit() {
     if (!currency) return setError('у комнаты валюта, которой нет в справочнике')
     if (title.trim() === '') return setError('не сказано, за что платили')
     const parsed = parseAmount(amount, currency.decimals)
@@ -676,7 +701,7 @@ function SpendForm({
     if (problem) return setError(problem)
 
     setError('')
-    void onSave(draft)
+    await once(() => onSave(draft)).catch((failure: unknown) => setError(notSaved(failure)))
   }
 
   return (
@@ -744,7 +769,7 @@ function SpendForm({
         <button type="button" onClick={onCancel}>
           Отмена
         </button>
-        <button type="button" className="btn--primary" onClick={submit}>
+        <button type="button" className="btn--primary" disabled={busy} onClick={() => void submit()}>
           {record ? 'Сохранить' : 'Добавить'}
         </button>
       </div>
@@ -775,6 +800,7 @@ function Transfers({
   const [error, setError] = useState('')
   // Какой перевод ждёт второго нажатия «Точно удалить».
   const [sure, setSure] = useState<string | null>(null)
+  const { busy, once } = useOnce()
 
   async function submit() {
     if (!currency) return setError('у комнаты валюта, которой нет в справочнике')
@@ -783,10 +809,12 @@ function Transfers({
     if (fromId === toId) return setError('перевод самому себе ничего не меняет')
 
     setError('')
-    await db.put('roomTransfers', createTransfer(room.id, { fromId, toId, amount: parsed.amount, date: today(), note }))
-    setAmount('')
-    setNote('')
-    setAdding(false)
+    await once(async () => {
+      await db.put('roomTransfers', createTransfer(room.id, { fromId, toId, amount: parsed.amount, date: today(), note }))
+      setAmount('')
+      setNote('')
+      setAdding(false)
+    }).catch((problem: unknown) => setError(notSaved(problem)))
   }
 
   return (
@@ -873,7 +901,7 @@ function Transfers({
             <button type="button" onClick={() => setAdding(false)}>
               Отмена
             </button>
-            <button type="button" className="btn--primary" onClick={() => void submit()}>
+            <button type="button" className="btn--primary" disabled={busy} onClick={() => void submit()}>
               Записать
             </button>
           </div>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Account, Balance, Currency } from '../../app/model.ts'
+import { latestOf } from './capital.ts'
 import { DEFERRED_PART, draftRow, MAIN_PART, rowWrites, unchanged, withDeferred, type RowDraft } from './row.ts'
 
 /** Счета и суммы выдуманы: код публичный (CLAUDE.md, «Личные данные»). */
@@ -136,5 +137,36 @@ describe('запись строки', () => {
 
   it('дата не ГГГГ-ММ-ДД — отказ', () => {
     expect(rowWrites(rows, data, '23.09.2026', ctx).problems[0]?.reason).toContain('ГГГГ-ММ-ДД')
+  })
+})
+
+describe('двойной тап «Записать снимок» — один снимок на дату (Р-60)', () => {
+  const rows = draftRow(accounts, balances, currencies, '2026-09-23')
+  const day = '2026-09-23'
+
+  /** Как `db.putMany`: надгробия и новые записи ложатся по `id`. */
+  function stored(store: readonly Balance[], writes: { put: Balance[]; removed: Balance[] }): Balance[] {
+    const byId = new Map(store.map((each) => [each.id, each]))
+    for (const each of [...writes.removed, ...writes.put]) byId.set(each.id, each)
+    return [...byId.values()]
+  }
+
+  const cashOn = (store: readonly Balance[]) =>
+    latestOf(store, 'cash', day).reduce((sum, each) => sum + each.amount, 0)
+
+  it('два набора по одному экрану на одну дату — удвоение: его и не даёт защита', () => {
+    const first = rowWrites(rows, data, day, ctx)
+    const second = rowWrites(rows, data, day, ctx)
+    const after = stored(stored(balances, first), second)
+    expect(latestOf(after, 'cash', day)).toHaveLength(2)
+    expect(cashOn(after)).toBe(2 * 15000)
+  })
+
+  it('второй по снимкам из базы заменяет первый — капитал как после одного тапа', () => {
+    const once = stored(balances, rowWrites(rows, data, day, ctx))
+    const twice = stored(once, rowWrites(rows, { ...data, balances: once }, day, ctx))
+    expect(latestOf(twice, 'cash', day)).toHaveLength(1)
+    expect(cashOn(twice)).toBe(cashOn(once))
+    expect(cashOn(twice)).toBe(15000)
   })
 })
