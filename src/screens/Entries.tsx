@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Category, Entry, SpecialPeriod } from '../app/model.ts'
@@ -32,6 +32,7 @@ import { feedDateText, feedHeading, filterFeed, groupFeed, recordsText } from '.
 import { feedItems } from '../registry.ts'
 import { useFeed } from '../shared/screens/useFeed.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
+import { notSaved, useOnce } from './once.ts'
 
 /**
  * «Операции» — то, что внесено руками, и итоги периодов (Р-02).
@@ -248,32 +249,6 @@ function Search({
   )
 }
 
-// ─── Одна запись за раз ────────────────────────────────────────────────────
-
-/**
- * Защита от двойного тапа — как у долгов (Р-60). Флаг в `ref` ставится
- * до первого `await`: два тапа подряд приходят раньше, чем React
- * перерисует кнопку неактивной, — `busy` здесь только видимая часть.
- */
-function useOnce() {
-  const writing = useRef(false)
-  const [busy, setBusy] = useState(false)
-
-  async function once(write: () => Promise<void>) {
-    if (writing.current) return
-    writing.current = true
-    setBusy(true)
-    try {
-      await write()
-    } finally {
-      writing.current = false
-      setBusy(false)
-    }
-  }
-
-  return { busy, once }
-}
-
 // ─── Регулярные (Р-06) ─────────────────────────────────────────────────────
 
 /**
@@ -319,7 +294,7 @@ function RecurringBlock({
       if ('problem' in made) return setProblems([made.problem])
       setProblems([])
       await db.put('entries', made.entry)
-    }).catch((error: unknown) => setProblems([`не записалось: ${String(error)}`]))
+    }).catch((error: unknown) => setProblems([notSaved(error)]))
   }
 
   async function all() {
@@ -327,7 +302,7 @@ function RecurringBlock({
       const made = enterAll(await fresh(), month, today())
       setProblems(made.problems)
       if (made.entries.length > 0) await db.putMany('entries', made.entries)
-    }).catch((error: unknown) => setProblems([`не записалось: ${String(error)}`]))
+    }).catch((error: unknown) => setProblems([notSaved(error)]))
   }
 
   return (
@@ -658,7 +633,7 @@ function EntryForm({
     await once(async () => {
       await db.put('entries', result.entry)
       onDone()
-    }).catch((problem: unknown) => setError(`не записалось: ${String(problem)}`))
+    }).catch((problem: unknown) => setError(notSaved(problem)))
   }
 
   return (
