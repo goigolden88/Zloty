@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RoomEvent, RoomSpend, RoomTransfer } from '../../app/model.ts'
 import { eventsOf, roomBalances, settle, spendsOf, spentTotal, totalsOf, transfersOf } from './balance.ts'
+import { markSettled } from './records.ts'
 
 /** Люди и комнаты выдуманные: код публичный (CLAUDE.md). */
 const ANYA = 'person-anya'
@@ -174,5 +175,37 @@ describe('кто кому переводит — минимизация (Р-01, 
     const lines = settle(new Map([[ANYA, 33334], [BORYA, -33333], [VERA, -1]]))
     expect(lines.every((line) => Number.isInteger(line.amount))).toBe(true)
     expect(lines.reduce((sum, line) => sum + line.amount, 0)).toBe(33334)
+  })
+})
+
+describe('двойной тап «Перевели» — один перевод: по переводам из базы (Р-60)', () => {
+  const room = { id: ROOM, personIds: [ANYA, BORYA, VERA] }
+  const spends = [spend({ id: 's1' })]
+  const line = { fromId: BORYA, toId: ANYA, amount: 100000 }
+
+  it('первый тап пишет перевод по строке', () => {
+    expect(markSettled(room, line, spends, [], '2026-10-29')).toMatchObject({ roomId: ROOM, ...line })
+  })
+
+  it('два перевода по одной строке разворачивают долг — это и не даёт защита', () => {
+    const twice = [transfer({ id: 't1' }), transfer({ id: 't2' })]
+    expect(roomBalances(room.personIds, spends, twice).get(BORYA)).toBe(100000)
+  })
+
+  it('в базе первый уже есть — второй не пишется, остаток как после одного тапа', () => {
+    const first = markSettled(room, line, spends, [], '2026-10-29')
+    expect(markSettled(room, line, spends, [first!], '2026-10-29')).toBeNull()
+    expect(roomBalances(room.personIds, spends, [first!]).get(BORYA)).toBe(0)
+  })
+
+  it('соседняя строка после первого перевода по-прежнему пишется', () => {
+    const first = markSettled(room, line, spends, [], '2026-10-29')
+    const vera = { fromId: VERA, toId: ANYA, amount: 100000 }
+    expect(markSettled(room, vera, spends, [first!], '2026-10-29')).toMatchObject(vera)
+  })
+
+  it('переводы другой комнаты и удалённые строку не закрывают', () => {
+    const other = [transfer({ id: 't1', roomId: 'room-other' }), transfer({ id: 't2', deleted: true })]
+    expect(markSettled(room, line, spends, other, '2026-10-29')).toMatchObject(line)
   })
 })

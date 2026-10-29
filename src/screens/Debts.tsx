@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { db } from '../app/core.ts'
 import type { Currency, Loan, Money, Person, Room } from '../app/model.ts'
@@ -29,6 +29,7 @@ import { useLedger, type LedgerData } from '../modules/ledger/useLedger.ts'
 import { findCurrency, formatMoney, parseAmount } from '../modules/money/money.ts'
 import { formatDateLoose, monthName, today } from '../shared/core/dates.ts'
 import { Fold } from '../shared/ui/Fold.tsx'
+import { notSaved, useOnce } from './once.ts'
 
 /**
  * «Долги» — кто мне должен, кому я, и что лежит в комнатах (Р-01, Р-30).
@@ -340,29 +341,12 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
   const [paying, setPaying] = useState(false)
   const [amount, setAmount] = useState('')
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
   const [sure, setSure] = useState(false)
-  const writing = useRef(false)
+  // Одна запись за раз (Р-60).
+  const { busy, once } = useOnce()
   const state = loanState(loan, data.repayments)
   const currency = findCurrency(ledger.currencies, loan.money.currency)
   const mine = signedLeft(loan, data.repayments).amount > 0
-
-  /**
-   * Одна запись за раз (Р-60). Флаг в `ref` ставится до первого `await`:
-   * два клика подряд приходят раньше, чем React перерисует кнопку
-   * погашенной, — `busy` здесь только видимая часть.
-   */
-  async function once(write: () => Promise<void>) {
-    if (writing.current) return
-    writing.current = true
-    setBusy(true)
-    try {
-      await write()
-    } finally {
-      writing.current = false
-      setBusy(false)
-    }
-  }
 
   async function repay() {
     if (!currency) return setError(`валюты ${loan.money.currency} нет в справочнике`)
@@ -375,7 +359,7 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
       await db.put('repayments', createRepayment(loan.id, { amount: parsed.amount, currency: loan.money.currency }, today()))
       setAmount('')
       setPaying(false)
-    })
+    }).catch((problem: unknown) => setError(notSaved(problem)))
   }
 
   // Остаток — по возвратам из базы, а не с экрана (Р-60).
@@ -383,7 +367,7 @@ function LoanLine({ loan, data, ledger }: { loan: Loan; data: DebtsData; ledger:
     await once(async () => {
       const whole = repayAll(loan, await db.getAll('repayments'), today())
       if (whole) await db.put('repayments', whole)
-    })
+    }).catch((problem: unknown) => setError(notSaved(problem)))
   }
 
   return (
@@ -470,6 +454,7 @@ function LoanForm({
   const [date, setDate] = useState(today())
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
+  const { busy, once } = useOnce()
 
   const chosenCurrency = findCurrency(ledger.currencies, code)
   const typed = chosenCurrency ? parseAmount(amount, chosenCurrency.decimals) : null
@@ -478,15 +463,17 @@ function LoanForm({
       (typed.rounded ? ' — округлено: больше знаков у этой валюты нет' : '')
     : ''
 
-  function submit() {
+  async function submit() {
     if (!personId) return setError('не выбран человек')
     const currency = findCurrency(ledger.currencies, code)
     if (!currency) return setError(`валюты ${code} нет в справочнике`)
     const parsed = parseAmount(amount, currency.decimals)
     if (!parsed) return setError('сумма — положительное число')
 
+    const draft: LoanDraft = { personId, direction, money: { amount: parsed.amount, currency: code }, date, note }
     setError('')
-    void onSave({ personId, direction, money: { amount: parsed.amount, currency: code }, date, note })
+    // Не записалось — форма остаётся с введённым, кнопка снова доступна.
+    await once(() => onSave(draft)).catch((problem: unknown) => setError(notSaved(problem)))
   }
 
   if (people.length === 0) {
@@ -551,7 +538,7 @@ function LoanForm({
         <button type="button" onClick={onCancel}>
           Отмена
         </button>
-        <button type="button" className="btn--primary" onClick={submit}>
+        <button type="button" className="btn--primary" disabled={busy} onClick={() => void submit()}>
           Записать
         </button>
       </div>
@@ -653,17 +640,18 @@ function RoomForm({
   const [code, setCode] = useState('code' in base ? base.code : (ledger.currencies[0]?.code ?? ''))
   const [chosen, setChosen] = useState<string[]>(me ? [me.id] : [])
   const [error, setError] = useState('')
+  const { busy, once } = useOnce()
 
   function toggle(id: string) {
     setChosen((was) => (was.includes(id) ? was.filter((each) => each !== id) : [...was, id]))
   }
 
-  function submit() {
+  async function submit() {
     const draft: RoomDraft = { name, currency: code, personIds: chosen }
     const problem = roomProblem(data.rooms, draft)
     if (problem) return setError(problem)
     setError('')
-    void onSave(draft)
+    await once(() => onSave(draft)).catch((failure: unknown) => setError(notSaved(failure)))
   }
 
   return (
@@ -702,7 +690,7 @@ function RoomForm({
         <button type="button" onClick={onCancel}>
           Отмена
         </button>
-        <button type="button" className="btn--primary" onClick={submit}>
+        <button type="button" className="btn--primary" disabled={busy} onClick={() => void submit()}>
           Завести
         </button>
       </div>
@@ -789,13 +777,14 @@ function PersonForm({
   const [self, setSelf] = useState(record?.self === true)
   const [starred, setStarred] = useState(record?.starred === true)
   const [error, setError] = useState('')
+  const { busy, once } = useOnce()
 
-  function submit() {
+  async function submit() {
     const draft: PersonDraft = { name, self, starred }
     const problem = personProblem(data.people, draft, record?.id)
     if (problem) return setError(problem)
     setError('')
-    void onSave(draft)
+    await once(() => onSave(draft)).catch((failure: unknown) => setError(notSaved(failure)))
   }
 
   return (
@@ -826,7 +815,7 @@ function PersonForm({
         <button type="button" onClick={onCancel}>
           Отмена
         </button>
-        <button type="button" className="btn--primary" onClick={submit}>
+        <button type="button" className="btn--primary" disabled={busy} onClick={() => void submit()}>
           {record ? 'Сохранить' : 'Завести'}
         </button>
       </div>

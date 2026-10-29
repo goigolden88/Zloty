@@ -22,6 +22,7 @@ import type {
   RoomSpend,
   RoomTransfer,
 } from '../../app/model.ts'
+import { roomBalances, settle, transfersOf, type Settlement } from './balance.ts'
 import { loanState } from './loans.ts'
 
 /** Лишние пробелы — не часть имени. */
@@ -235,6 +236,27 @@ export function createTransfer(roomId: string, draft: TransferDraft): RoomTransf
   }
   if (draft.note && clean(draft.note).length > 0) transfer.note = clean(draft.note)
   return transfer
+}
+
+/**
+ * «Перевели» у подсказки (Р-30): перевод по строке «кто кому должен».
+ *
+ * Переводы экран передаёт прочитанными из базы перед самой записью, как
+ * возвраты у «Вернули всё» (Р-60): строка подсказки видна, пока экран
+ * не обновился, и второй тап записал бы второй перевод — долг развернулся бы
+ * в обратную сторону. `null` — по записанному этой строки уже нет.
+ */
+export function markSettled(
+  room: { id: string; personIds: readonly string[] },
+  line: Settlement,
+  spends: readonly RoomSpend[],
+  transfers: readonly RoomTransfer[],
+  date: string,
+): RoomTransfer | null {
+  const still = settle(roomBalances(room.personIds, spends, transfersOf(transfers, room.id)))
+  const due = still.some((each) => each.fromId === line.fromId && each.toId === line.toId && each.amount === line.amount)
+  if (!due) return null
+  return createTransfer(room.id, { fromId: line.fromId, toId: line.toId, amount: line.amount, date })
 }
 
 // ─── Разовые долги ─────────────────────────────────────────────────────────
