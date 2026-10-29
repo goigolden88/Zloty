@@ -1734,6 +1734,31 @@ async function scenario(profile) {
     String(reopened),
   )
 
+  // Удаление долга — на отдельном долге, записанном для этого: узнаётся по
+  // заметке. Долг на 3 000 нужен дальше и остаётся.
+  await act(`byText('button', 'Записать долг').click();`)
+  await sleep(400)
+  await act(`
+    set([...document.querySelectorAll('.form input')].find((el) => el.inputMode === 'decimal'), '100');
+    set(document.querySelector('input[placeholder="за что, если нужно"]'), 'прогон: долг на удаление');
+  `)
+  await sleep(300)
+  await act(`byText('button', 'Записать').click();`)
+  await sleep(800)
+  const spareLoan = `[...document.querySelectorAll('li.line')].find((el) => el.textContent.includes('прогон: долг на удаление'))`
+  const loanMade = await run(`Boolean(${spareLoan})`)
+  check('второй долг, на удаление, записался', loanMade === true, String(loanMade))
+  await act(`[...${spareLoan}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Удалить').click();`)
+  await sleep(400)
+  await act(`[...${spareLoan}.querySelectorAll('button')].find((each) => each.textContent.trim() === 'Точно удалить').click();`)
+  await sleep(800)
+  const loanGone = await screen()
+  check(
+    '«Точно удалить» убирает долг с экрана, а долг на 3 000 остаётся',
+    !has(loanGone, 'прогон: долг на удаление') && has(loanGone, '3 000'),
+    line(loanGone, 'прогон: долг на удаление') || line(loanGone, '3 000'),
+  )
+
   // Комната: заводим на двоих, идём внутрь.
   await act(`if (!byText('button', 'Завести комнату')) startsWith('.fold__btn', 'Комнаты').click();`)
   await sleep(400)
@@ -2079,6 +2104,66 @@ async function scenario(profile) {
     '«Точно удалить» убирает событие с экрана, а «Шашлык» остаётся',
     !has(eventGone, 'Баня') && has(eventGone, 'Шашлык'),
     line(eventGone, 'Баня'),
+  )
+
+  // Удалённое обязано не вернуться после перезагрузки: с экрана запись
+  // уходит сразу, а до базы удаление могло и не дойти. Одна перезагрузка
+  // после всех удалений; рядом с каждым — соседняя запись того же экрана,
+  // чтобы пустой экран не сошёл за удаление.
+  await send('Page.navigate', { url: APP })
+  await waitFor(`(document.querySelector('#root')?.innerText ?? '').includes('Месяц')`, 20_000)
+  await sleep(1000)
+
+  await go('/books')
+  const booksReloaded = await screen()
+  check(
+    'после перезагрузки удалённой регулярной «Подписка» нет, а «Связь» на месте',
+    !has(booksReloaded, 'Подписка') && has(booksReloaded, 'Связь'),
+    line(booksReloaded, 'Подписка') || line(booksReloaded, 'Связь'),
+  )
+
+  await go('/')
+  const monthReloaded = await screen()
+  check(
+    'после перезагрузки удалённого особого периода нет, блок на месте',
+    !has(monthReloaded, 'Прогон: поездка') && has(monthReloaded, 'Особых периодов пока нет'),
+    line(monthReloaded, 'Прогон: поездка') || line(monthReloaded, 'Особых периодов'),
+  )
+
+  await go('/debts')
+  await sleep(400)
+  const debtsReloaded = await screen()
+  check(
+    'после перезагрузки удалённого долга нет, а долг на 3 000 на месте',
+    !has(debtsReloaded, 'прогон: долг на удаление') && has(debtsReloaded, '3 000'),
+    line(debtsReloaded, 'прогон: долг на удаление') || line(debtsReloaded, '3 000'),
+  )
+
+  await act(`byText('a', 'Лето').click();`)
+  await sleep(800)
+  await act(`if (!byText('button', 'Записать перевод')) startsWith('.fold__btn', 'Переводы').click();`)
+  await sleep(500)
+  const summerReloaded = await screen()
+  check(
+    'после перезагрузки удалённого перевода нет, а «Боря → Аня» на месте',
+    !has(summerReloaded, 'прогон: на удаление') && has(summerReloaded, 'Боря → Аня'),
+    line(summerReloaded, 'прогон: на удаление') || line(summerReloaded, 'Боря → Аня'),
+  )
+  check(
+    'после перезагрузки удалённой траты «Пицца» нет, а «Мячи» на месте',
+    !has(summerReloaded, 'Пицца') && has(summerReloaded, 'Мячи'),
+    line(summerReloaded, 'Пицца') || line(summerReloaded, 'Мячи'),
+  )
+
+  await go('/debts')
+  await sleep(400)
+  await act(`byText('a', 'Дача').click();`)
+  await sleep(800)
+  const dachaReloaded = await screen()
+  check(
+    'после перезагрузки удалённого события «Баня» нет, а «Шашлык» на месте',
+    !has(dachaReloaded, 'Баня') && has(dachaReloaded, 'Шашлык'),
+    line(dachaReloaded, 'Баня') || line(dachaReloaded, 'Шашлык'),
   )
 
   await go('/debts')
