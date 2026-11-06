@@ -50,9 +50,17 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.retry.outputs.page_url }}
     steps:
       # Требует Settings → Pages → Source = GitHub Actions.
       # Иначе шаг падает с «Not Found».
+      # GitHub Pages иногда не отвечает до таймаута (05.11: сайт и сервер разошлись,
+      # Ш-202 Штаба) — вторая попытка через минуту; упала и она — выкладка красная.
       - id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+      - if: steps.deployment.outcome == 'failure'
+        run: sleep 60
+      - id: retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4
